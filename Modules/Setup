@@ -182,6 +182,7 @@ PYTHONPATH=$(COREPYTHONPATH)
 #_codecs_tw cjkcodecs/_codecs_tw.c
 #_multibytecodec cjkcodecs/multibytecodec.c
 #unicodedata unicodedata.c
+#_base64 _base64/Cargo.toml _base64/src/lib.rs lib_base64.a
 
 # Modules with some UNIX dependencies
 

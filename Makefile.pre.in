@@ -58,6 +58,9 @@ DTRACE_HEADERS= @DTRACE_HEADERS@
 DTRACE_OBJS=    @DTRACE_OBJS@
 DSYMUTIL=       @DSYMUTIL@
 DSYMUTIL_PATH=  @DSYMUTIL_PATH@
+CARGO_HOME=@CARGO_HOME@
+CARGO_TARGET_DIR=@CARGO_TARGET_DIR@
+CARGO_PROFILE=@CARGO_PROFILE@
 
 GNULD=		@GNULD@
 
@@ -1594,6 +1597,10 @@ Makefile Modules/config.c: Makefile.pre \
 				$(srcdir)/Modules/Setup
 	@mv config.c Modules
 	@echo "The Makefile was updated, you may need to re-run make."
+
+.PHONY: regen-rust-wrapper-h
+regen-rust-wrapper-h: $(PYTHON_HEADERS)
+	PYTHON_HEADERS="$(PYTHON_HEADERS)" $(PYTHON_FOR_REGEN) $(srcdir)/Tools/build/regen-rust-wrapper-h.py
 
 .PHONY: regen-test-frozenmain
 regen-test-frozenmain: $(BUILDPYTHON)
@@ -3316,8 +3323,15 @@ clean-profile: clean-retain-profile clean-bolt
 clean-jit-stencils:
 	-rm -f $(JIT_TARGETS) $(JIT_GENERATED_STAMP) jit_stencils*.h jit_unwind_info*.h jit_shim*.o
 
+.PHONY: clean-rust
+clean-rust:
+	@if test @CARGO_HOME@ != ''; then \
+		echo Running cargo clean...; \
+		$(CARGO_HOME)/bin/cargo clean; \
+	fi
+
 .PHONY: clean
-clean: clean-profile clean-jit-stencils
+clean: clean-profile clean-jit-stencils clean-rust
 
 .PHONY: clobber
 clobber: clean

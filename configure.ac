@@ -4514,6 +4514,43 @@ fi
 
 AC_MSG_RESULT([$with_decimal_contextvar])
 
+dnl Try to detect cargo in the environment. Cargo and rustup
+dnl install into CARGO_HOME and RUSTUP_HOME, so check for those initially
+AC_MSG_CHECKING([for --with-rust-base64])
+AC_ARG_WITH(
+  [rust_base64],
+  [AS_HELP_STRING(
+    [--with-rust-base64],
+    [build _base64 module using the SIMD accelerated Rust implementation]
+  )],
+  [rust_base64="yes"],
+  [rust_base64="no"])
+AC_MSG_RESULT([$rust_base64])
+
+AS_VAR_IF(
+  [rust_base64], [yes],
+  [
+    if test "$CARGO_HOME+set" != "set"; then
+      dnl try to guess the default UNIX value of ~/.cargo
+      CARGO_HOME="$HOME/.cargo"
+    fi
+    AC_CHECK_PROG(HAS_CARGO, [cargo], ["$CARGO_HOME"], [found], [not-found])
+    if test $HAS_CARGO = "not-found"; then
+      AC_MSG_ERROR([Could not find cargo. Please re-run configure with \$CARGO_HOME set])
+    fi
+    if test "$Py_OPT" = 'true'; then
+      CARGO_TARGET_DIR='release'
+      CARGO_PROFILE='release'
+    else
+      CARGO_TARGET_DIR='debug'
+      CARGO_PROFILE='dev'
+    fi
+    AC_SUBST([CARGO_HOME])
+    AC_SUBST([CARGO_TARGET_DIR])
+    AC_SUBST([CARGO_PROFILE])
+  ]
+)
+
 dnl detect sqlite3 from Emscripten emport
 PY_CHECK_EMSCRIPTEN_PORT([LIBSQLITE3], [-sUSE_SQLITE3])
 
@@ -8722,6 +8759,10 @@ PY_STDLIB_MOD([_tkinter],
 PY_STDLIB_MOD([_uuid],
   [], [test "$have_uuid" = "yes"],
   [$LIBUUID_CFLAGS], [$LIBUUID_LIBS])
+
+PY_STDLIB_MOD([_base64],
+  [], [test "$rust_base64" = "yes"],
+  [], [])
 
 dnl compression libs
 PY_STDLIB_MOD([zlib], [], [test "$have_zlib" = yes],

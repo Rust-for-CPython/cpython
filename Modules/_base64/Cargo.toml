@@ -1,0 +1,12 @@
+[package]
+name = "_base64"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22.1"
+cpython-sys ={ path = "../cpython-sys" }
+
+[lib]
+name = "_base64"
+crate-type = ["staticlib"]

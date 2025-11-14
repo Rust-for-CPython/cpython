@@ -692,6 +692,8 @@ MODULE_BINASCII_FALSE
 MODULE_BINASCII_TRUE
 MODULE_ZLIB_FALSE
 MODULE_ZLIB_TRUE
+MODULE__BASE64_FALSE
+MODULE__BASE64_TRUE
 MODULE__UUID_FALSE
 MODULE__UUID_TRUE
 MODULE__TKINTER_FALSE
@@ -895,6 +897,10 @@ TCLTK_LIBS
 TCLTK_CFLAGS
 LIBSQLITE3_LIBS
 LIBSQLITE3_CFLAGS
+CARGO_PROFILE
+CARGO_TARGET_DIR
+CARGO_HOME
+HAS_CARGO
 LIBMPDEC_LIBS
 LIBMPDEC_CFLAGS
 MODULE__CTYPES_MALLOC_CLOSURE
@@ -1131,6 +1137,7 @@ with_tzpath
 with_libs
 with_system_expat
 with_decimal_contextvar
+with_rust_base64
 enable_loadable_sqlite_extensions
 with_dbmliborder
 enable_ipv6
@@ -1950,6 +1957,8 @@ Optional Packages:
   --with-decimal-contextvar
                           build _decimal module using a coroutine-local rather
                           than a thread-local context (default is yes)
+  --with-rust-base64      build _base64 module using the SIMD accelerated Rust
+                          implementation
   --with-dbmliborder=db1:db2:...
                           override order to check db backends for dbm; a valid
                           value is a colon separated string with the backend
@@ -17041,6 +17050,89 @@ fi
 
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $with_decimal_contextvar" >&5
 printf "%s\n" "$with_decimal_contextvar" >&6; }
+
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for --with-rust-base64" >&5
+printf %s "checking for --with-rust-base64... " >&6; }
+
+# Check whether --with-rust_base64 was given.
+if test ${with_rust_base64+y}
+then :
+  withval=$with_rust_base64; rust_base64="yes"
+else case e in #(
+  e) rust_base64="no" ;;
+esac
+fi
+
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $rust_base64" >&5
+printf "%s\n" "$rust_base64" >&6; }
+
+if test "x$rust_base64" = xyes
+then :
+
+    if test "$CARGO_HOME+set" != "set"; then
+            CARGO_HOME="$HOME/.cargo"
+    fi
+    # Extract the first word of "cargo", so it can be a program name with args.
+set dummy cargo; ac_word=$2
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+printf %s "checking for $ac_word... " >&6; }
+if test ${ac_cv_prog_HAS_CARGO+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e) if test -n "$HAS_CARGO"; then
+  ac_cv_prog_HAS_CARGO="$HAS_CARGO" # Let the user override the test.
+else
+as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in not-found
+do
+  IFS=$as_save_IFS
+  case $as_dir in #(((
+    '') as_dir=./ ;;
+    */) ;;
+    *) as_dir=$as_dir/ ;;
+  esac
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir$ac_word$ac_exec_ext"; then
+    ac_cv_prog_HAS_CARGO=""$CARGO_HOME""
+    printf "%s\n" "$as_me:${as_lineno-$LINENO}: found $as_dir$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  test -z "$ac_cv_prog_HAS_CARGO" && ac_cv_prog_HAS_CARGO="found"
+fi ;;
+esac
+fi
+HAS_CARGO=$ac_cv_prog_HAS_CARGO
+if test -n "$HAS_CARGO"; then
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $HAS_CARGO" >&5
+printf "%s\n" "$HAS_CARGO" >&6; }
+else
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+fi
+
+
+    if test $HAS_CARGO = "not-found"; then
+      as_fn_error $? "Could not find cargo. Please re-run configure with \$CARGO_HOME set" "$LINENO" 5
+    fi
+    if test "$Py_OPT" = 'true'; then
+      CARGO_TARGET_DIR='release'
+      CARGO_PROFILE='release'
+    else
+      CARGO_TARGET_DIR='debug'
+      CARGO_PROFILE='dev'
+    fi
+
+
+
+
+
+fi
+
 
 
 
@@ -37543,6 +37635,47 @@ printf "%s\n" "$py_cv_module__uuid" >&6; }
 
 
 
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for stdlib extension module _base64" >&5
+printf %s "checking for stdlib extension module _base64... " >&6; }
+        if test "$py_cv_module__base64" != "n/a"
+then :
+
+    if true
+then :
+  if test "$rust_base64" = "yes"
+then :
+  py_cv_module__base64=yes
+else case e in #(
+  e) py_cv_module__base64=missing ;;
+esac
+fi
+else case e in #(
+  e) py_cv_module__base64=disabled ;;
+esac
+fi
+
+fi
+  as_fn_append MODULE_BLOCK "MODULE__BASE64_STATE=$py_cv_module__base64$as_nl"
+  if test "x$py_cv_module__base64" = xyes
+then :
+
+
+
+
+fi
+   if test "$py_cv_module__base64" = yes; then
+  MODULE__BASE64_TRUE=
+  MODULE__BASE64_FALSE='#'
+else
+  MODULE__BASE64_TRUE='#'
+  MODULE__BASE64_FALSE=
+fi
+
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $py_cv_module__base64" >&5
+printf "%s\n" "$py_cv_module__base64" >&6; }
+
+
+
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for stdlib extension module zlib" >&5
 printf %s "checking for stdlib extension module zlib... " >&6; }
         if test "$py_cv_module_zlib" != "n/a"
@@ -38844,6 +38977,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${MODULE__UUID_TRUE}" && test -z "${MODULE__UUID_FALSE}"; then
   as_fn_error $? "conditional \"MODULE__UUID\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${MODULE__BASE64_TRUE}" && test -z "${MODULE__BASE64_FALSE}"; then
+  as_fn_error $? "conditional \"MODULE__BASE64\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${MODULE_ZLIB_TRUE}" && test -z "${MODULE_ZLIB_FALSE}"; then
