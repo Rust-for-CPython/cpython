@@ -83,6 +83,8 @@ case $makepre in
 '')	makepre=Makefile.pre;;
 esac
 
+UNAME_SYSTEM=`uname -s 2>/dev/null || echo unknown`
+
 # Newline for sed i and a commands
 NL='\
 '
@@ -289,7 +291,14 @@ sed -e 's/[ 	]*#.*//' -e '/^[ 	]*$/d' |
 			echo "$rule" >>$rulesf
 			for mod in $mods
 			do
-				custom_ldflags="-Wl,--defsym=PyInit_$mod=PyInit_$mod"
+				case $UNAME_SYSTEM in
+				Darwin*)
+					custom_ldflags="$custom_ldflags -Wl,-u,_PyInit_$mod"
+					;;
+				*)
+					custom_ldflags="$custom_ldflags -Wl,--defsym=PyInit_$mod=PyInit_$mod"
+					;;
+				esac
 			done
 		fi
 		case $doconfig in
