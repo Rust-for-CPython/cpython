@@ -8,6 +8,7 @@ fn main() {
         .header("wrapper.h")
         .clang_arg(format!("-I{}", srcdir.as_os_str().to_str().unwrap()))
         .clang_arg(format!("-I{}/Include", srcdir.as_os_str().to_str().unwrap()))
+        .clang_arg(format!("-I{}/Include/internal", srcdir.as_os_str().to_str().unwrap()))
         .allowlist_function("Py.*")
         .allowlist_function("_Py.*")
         .allowlist_type("Py.*")

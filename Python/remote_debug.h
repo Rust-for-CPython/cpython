@@ -29,6 +29,7 @@ extern "C" {
 
 #include "pyconfig.h"
 #include "internal/pycore_ceval.h"
+#include "internal/pycore_debug_offsets.h"
 
 #ifdef __linux__
 #    include <elf.h>
