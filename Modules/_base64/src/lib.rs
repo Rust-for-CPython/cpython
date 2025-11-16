@@ -111,7 +111,7 @@ impl Drop for BorrowedBuffer {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn b64encode(
+pub unsafe extern "C" fn standard_b64encode(
     _module: *mut PyObject,
     args: *mut *mut PyObject,
     nargs: Py_ssize_t,
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn b64encode(
         unsafe {
             PyErr_SetString(
                 PyExc_TypeError,
-                c"b64encode() takes exactly one argument".as_ptr(),
+                c"standard_b64encode() takes exactly one argument".as_ptr(),
             );
         }
         return ptr::null_mut();
@@ -137,7 +137,7 @@ pub unsafe extern "C" fn b64encode(
         unsafe {
             PyErr_SetString(
                 PyExc_TypeError,
-                c"b64encode() argument has negative length".as_ptr(),
+                c"standard_b64encode() argument has negative length".as_ptr(),
             );
         }
         return ptr::null_mut();
@@ -206,9 +206,9 @@ unsafe impl Sync for ModuleDef {}
 pub static _BASE64_MODULE_METHODS: [PyMethodDef; 2] = {
     [
         PyMethodDef {
-            ml_name: c"b64encode".as_ptr() as *mut c_char,
+            ml_name: c"standard_b64encode".as_ptr() as *mut c_char,
             ml_meth: PyMethodDefFuncPointer {
-                PyCFunctionFast: b64encode,
+                PyCFunctionFast: standard_b64encode,
             },
             ml_flags: METH_FASTCALL,
             ml_doc: c"Demo for the _base64 module".as_ptr() as *mut c_char,
