@@ -1598,10 +1598,6 @@ Makefile Modules/config.c: Makefile.pre \
 	@mv config.c Modules
 	@echo "The Makefile was updated, you may need to re-run make."
 
-.PHONY: regen-rust-wrapper-h
-regen-rust-wrapper-h: $(PYTHON_HEADERS)
-	PYTHON_HEADERS="$(PYTHON_HEADERS)" $(PYTHON_FOR_REGEN) $(srcdir)/Tools/build/regen-rust-wrapper-h.py
-
 .PHONY: regen-test-frozenmain
 regen-test-frozenmain: $(BUILDPYTHON)
 	# Regenerate Programs/test_frozenmain.h
@@ -3438,6 +3434,9 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
 
 ##########################################################################
 # Module dependencies and platform-specific files
+
+cpython-sys: Modules/cpython-sys/Cargo.toml Modules/cpython-sys/build.rs Modules/cpython-sys/wrapper.h Modules/cpython-sys/parser.h
+	cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE)
 
 # force rebuild when header file or module build flavor (static/shared) is changed
 MODULE_DEPS_STATIC=Modules/config.c
