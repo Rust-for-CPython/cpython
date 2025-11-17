@@ -287,7 +287,7 @@ sed -e 's/[ 	]*#.*//' -e '/^[ 	]*$/d' |
 			libs=
 			# depends on the headers through cpython-sys
 			rule="$objs: cpython-sys \$(srcdir)/Cargo.toml \$(srcdir)/Cargo.lock \$(srcdir)/$srcdir/$manifest $prefixed_srcs \$(PYTHON_HEADERS)"
-			rule="$rule; cargo build --lib --locked --package ${mods} --profile \$(CARGO_PROFILE)"
+			rule="$rule; CARGO_TARGET_DIR=\$(abs_builddir)/target PYTHON_BUILD_DIR=\$(abs_builddir) cargo build --lib --locked --package ${mods} --profile \$(CARGO_PROFILE) --manifest-path \$(srcdir)/Cargo.toml"
 			echo "$rule" >>$rulesf
 			for mod in $mods
 			do

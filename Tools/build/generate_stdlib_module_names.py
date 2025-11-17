@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import _imp
+import os
 import os.path
 import sys
 import sysconfig
@@ -14,6 +15,7 @@ SCRIPT_NAME = 'Tools/build/generate_stdlib_module_names.py'
 
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 STDLIB_PATH = os.path.join(SRC_DIR, 'Lib')
+MODULES_PATH = os.path.join(SRC_DIR, 'Modules')
 
 IGNORE = {
     '__init__',
@@ -85,6 +87,19 @@ def list_modules_setup_extensions(names: set[str]) -> None:
     names.update(checker.list_module_names(all=True))
 
 
+def list_rust_modules(names: set[str]) -> None:
+    if not os.path.isdir(MODULES_PATH):
+        return
+    for entry in os.scandir(MODULES_PATH):
+        if not entry.is_dir():
+            continue
+        if entry.name == "cpython-sys":
+            continue
+        cargo_toml = os.path.join(entry.path, "Cargo.toml")
+        if os.path.isfile(cargo_toml):
+            names.add(entry.name)
+
+
 # List frozen modules of the PyImport_FrozenModules list (Python/frozen.c).
 # Use the "./Programs/_testembed list_frozen" command.
 def list_frozen(names: set[str]) -> None:
@@ -110,6 +125,7 @@ def list_modules() -> set[str]:
 
     list_builtin_modules(names)
     list_modules_setup_extensions(names)
+    list_rust_modules(names)
     list_packages(names)
     list_python_modules(names)
     list_frozen(names)
