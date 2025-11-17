@@ -111,6 +111,14 @@ impl PyMethodDef {
 unsafe impl Sync for PyMethodDef {}
 unsafe impl Send for PyMethodDef {}
 
+#[cfg(py_gil_disabled)]
+pub const PyObject_HEAD_INIT: PyObject = {
+    let mut obj: PyObject = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+    obj.ob_flags = _Py_STATICALLY_ALLOCATED_FLAG as _;
+    obj
+};
+
+#[cfg(not(py_gil_disabled))]
 pub const PyObject_HEAD_INIT: PyObject = PyObject {
     __bindgen_anon_1: _object__bindgen_ty_1 {
         ob_refcnt_full: _Py_STATIC_IMMORTAL_INITIAL_REFCNT as i64,
