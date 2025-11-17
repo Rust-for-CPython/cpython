@@ -6,7 +6,10 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+include!(concat!(env!("OUT_DIR"), "/c_api.rs"));
+
+// TODO(emmatyping): include parser bindings (see build.rs)
+//include!(concat!(env!("OUT_DIR"), "/parser.rs"));
 /* Flag passed to newmethodobject */
 /* #define METH_OLDARGS  0x0000   -- unsupported now */
 pub const METH_VARARGS: c_int = 0x0001;
