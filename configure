@@ -897,6 +897,7 @@ TCLTK_LIBS
 TCLTK_CFLAGS
 LIBSQLITE3_LIBS
 LIBSQLITE3_CFLAGS
+CARGO_TARGET
 CARGO_PROFILE
 CARGO_TARGET_DIR
 CARGO_HOME
@@ -17112,7 +17113,17 @@ else
     CARGO_TARGET_DIR='debug'
     CARGO_PROFILE='dev'
   fi
+  # Set CARGO_TARGET for cross-compilation
+  case "$host" in
+    aarch64-apple-ios-simulator)
+      CARGO_TARGET="aarch64-apple-ios-sim"
+      ;;
+    *)
+      CARGO_TARGET="$host"
+      ;;
+  esac
 fi
+
 
 
 

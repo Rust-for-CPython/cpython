@@ -4535,10 +4535,20 @@ else
     CARGO_TARGET_DIR='debug'
     CARGO_PROFILE='dev'
   fi
+  # Set CARGO_TARGET for cross-compilation
+  case "$host" in
+    aarch64-apple-ios-simulator)
+      CARGO_TARGET="aarch64-apple-ios-sim"
+      ;;
+    *)
+      CARGO_TARGET="$host"
+      ;;
+  esac
 fi
 AC_SUBST([CARGO_HOME])
 AC_SUBST([CARGO_TARGET_DIR])
 AC_SUBST([CARGO_PROFILE])
+AC_SUBST([CARGO_TARGET])
 
 dnl detect sqlite3 from Emscripten emport
 PY_CHECK_EMSCRIPTEN_PORT([LIBSQLITE3], [-sUSE_SQLITE3])
