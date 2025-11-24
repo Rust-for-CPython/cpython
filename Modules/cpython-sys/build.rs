@@ -55,6 +55,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
         .allowlist_type("_?Py.*")
         .allowlist_var("_?Py.*")
         .blocklist_type("^PyMethodDef$")
+        .blocklist_type("PyObject")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings");
