@@ -56,6 +56,17 @@ pub const _Py_STATIC_IMMORTAL_INITIAL_REFCNT: Py_ssize_t =
 #[cfg(not(target_pointer_width = "64"))]
 pub const _Py_STATIC_IMMORTAL_INITIAL_REFCNT: Py_ssize_t = 7u32 << 28;
 
+#[repr(transparent)]
+pub struct PyObject(std::cell::UnsafeCell<_object>);
+
+impl PyObject {
+    #[inline]
+    pub fn as_raw(&self) -> *mut Self {
+        self.0.get() as *mut Self
+    }
+}
+
+
 #[repr(C)]
 pub union PyMethodDefFuncPointer {
     pub PyCFunction: unsafe extern "C" fn(slf: *mut PyObject, args: *mut PyObject) -> *mut PyObject,
@@ -113,18 +124,18 @@ unsafe impl Send for PyMethodDef {}
 
 #[cfg(py_gil_disabled)]
 pub const PyObject_HEAD_INIT: PyObject = {
-    let mut obj: PyObject = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+    let mut obj: _object = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
     obj.ob_flags = _Py_STATICALLY_ALLOCATED_FLAG as _;
-    obj
+    PyObject(std::cell::UnsafeCell::new(obj))
 };
 
 #[cfg(not(py_gil_disabled))]
-pub const PyObject_HEAD_INIT: PyObject = PyObject {
+pub const PyObject_HEAD_INIT: PyObject = PyObject(std::cell::UnsafeCell::new(_object {
     __bindgen_anon_1: _object__bindgen_ty_1 {
         ob_refcnt_full: _Py_STATIC_IMMORTAL_INITIAL_REFCNT as i64,
     },
     ob_type: std::ptr::null_mut(),
-};
+}));
 
 pub const PyModuleDef_HEAD_INIT: PyModuleDef_Base = PyModuleDef_Base {
     ob_base: PyObject_HEAD_INIT,
