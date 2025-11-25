@@ -66,7 +66,6 @@ impl PyObject {
     }
 }
 
-
 #[repr(C)]
 pub union PyMethodDefFuncPointer {
     pub PyCFunction: unsafe extern "C" fn(slf: *mut PyObject, args: *mut PyObject) -> *mut PyObject,

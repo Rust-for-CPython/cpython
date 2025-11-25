@@ -5,9 +5,15 @@ use std::ptr;
 use std::slice;
 
 use cpython_sys::METH_FASTCALL;
+use cpython_sys::Py_DecRef;
+use cpython_sys::Py_buffer;
+use cpython_sys::Py_ssize_t;
+use cpython_sys::PyBuffer_Release;
 use cpython_sys::PyBytes_AsString;
 use cpython_sys::PyBytes_FromStringAndSize;
-use cpython_sys::PyBuffer_Release;
+use cpython_sys::PyErr_NoMemory;
+use cpython_sys::PyErr_SetString;
+use cpython_sys::PyExc_TypeError;
 use cpython_sys::PyMethodDef;
 use cpython_sys::PyMethodDefFuncPointer;
 use cpython_sys::PyModuleDef;
@@ -15,17 +21,10 @@ use cpython_sys::PyModuleDef_HEAD_INIT;
 use cpython_sys::PyModuleDef_Init;
 use cpython_sys::PyObject;
 use cpython_sys::PyObject_GetBuffer;
-use cpython_sys::Py_DecRef;
-use cpython_sys::PyErr_NoMemory;
-use cpython_sys::PyErr_SetString;
-use cpython_sys::PyExc_TypeError;
-use cpython_sys::Py_buffer;
-use cpython_sys::Py_ssize_t;
 
 const PYBUF_SIMPLE: c_int = 0;
 const PAD_BYTE: u8 = b'=';
-const ENCODE_TABLE: [u8; 64] =
-    *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const ENCODE_TABLE: [u8; 64] = *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 #[inline]
 fn encoded_output_len(input_len: usize) -> Option<usize> {
@@ -64,8 +63,8 @@ fn encode_into(input: &[u8], output: &mut [u8]) -> usize {
             dst_index += 4;
         }
         2 => {
-            let chunk = (u32::from(input[src_index]) << 16)
-                | (u32::from(input[src_index + 1]) << 8);
+            let chunk =
+                (u32::from(input[src_index]) << 16) | (u32::from(input[src_index + 1]) << 8);
             output[dst_index] = ENCODE_TABLE[((chunk >> 18) & 0x3f) as usize];
             output[dst_index + 1] = ENCODE_TABLE[((chunk >> 12) & 0x3f) as usize];
             output[dst_index + 2] = ENCODE_TABLE[((chunk >> 6) & 0x3f) as usize];
