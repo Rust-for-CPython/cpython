@@ -85,12 +85,15 @@ struct BorrowedBuffer {
 impl BorrowedBuffer {
     fn from_object(obj: &PyObject) -> Result<Self, ()> {
         let mut view = MaybeUninit::<Py_buffer>::uninit();
-        if unsafe { PyObject_GetBuffer(obj.as_raw(), view.as_mut_ptr(), PYBUF_SIMPLE) } != 0 {
-            return Err(());
-        }
-        Ok(Self {
-            view: unsafe { view.assume_init() },
-        })
+        let buffer = unsafe {
+            if PyObject_GetBuffer(obj.as_raw(), view.as_mut_ptr(), PYBUF_SIMPLE) != 0 {
+                return Err(());
+            }
+            Self {
+                view: view.assume_init(),
+            }
+        };
+        Ok(buffer)
     }
 
     fn len(&self) -> Py_ssize_t {
