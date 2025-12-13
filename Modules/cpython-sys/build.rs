@@ -2,6 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    println!("cargo::rerun-if-env-changed=LIBPYTHON");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let srcdir = manifest_dir
         .parent()
@@ -11,6 +12,10 @@ fn main() {
     let builddir = env::var("PYTHON_BUILD_DIR").ok();
     if gil_disabled(&srcdir, builddir.as_deref()) {
         println!("cargo:rustc-cfg=py_gil_disabled");
+    }
+    if let Ok(libpython) = env::var("LIBPYTHON")
+        && libpython.len() != 0 {
+        println!("cargo::rustc-link-lib=static={}", libpython);
     }
     generate_c_api_bindings(srcdir, builddir.as_deref(), &out_path.as_path());
     // TODO(emmatyping): generate bindings to the internal parser API

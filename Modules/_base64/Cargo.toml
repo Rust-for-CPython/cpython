@@ -8,4 +8,4 @@ cpython-sys ={ path = "../cpython-sys" }
 
 [lib]
 name = "_base64"
-crate-type = ["staticlib"]
+crate-type = ["cdylib"]

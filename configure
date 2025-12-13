@@ -16110,6 +16110,9 @@ else
     aarch64-apple-ios-simulator)
       CARGO_TARGET="aarch64-apple-ios-sim"
       ;;
+    x86_64-*-linux-gnu)
+      CARGO_TARGET="x86_64-unknown-linux-gnu"
+      ;;
     *)
       CARGO_TARGET="$host"
       ;;

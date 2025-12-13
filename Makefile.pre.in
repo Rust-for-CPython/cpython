@@ -3373,7 +3373,7 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
 ##########################################################################
 # Module dependencies and platform-specific files
 
-cpython-sys: Modules/cpython-sys/Cargo.toml Modules/cpython-sys/build.rs Modules/cpython-sys/wrapper.h Modules/cpython-sys/parser.h
+cpython-sys: $(LIBPYTHON) Modules/cpython-sys/Cargo.toml Modules/cpython-sys/build.rs Modules/cpython-sys/wrapper.h Modules/cpython-sys/parser.h
 	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) \$(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
 
 # force rebuild when header file or module build flavor (static/shared) is changed
