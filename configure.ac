@@ -4762,6 +4762,10 @@ else
       esac
       CARGO_TARGET="${cargo_host%%-apple-darwin*}-apple-darwin"
       ;;
+    *-linux-android*)
+      cargo_host="${host/-unknown-/-}"
+      CARGO_TARGET="$cargo_host"
+      ;;
     *)
       CARGO_TARGET="$host"
       ;;
