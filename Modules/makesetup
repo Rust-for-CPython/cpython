@@ -282,7 +282,7 @@ sed -e 's/[ 	]*#.*//' -e '/^[ 	]*$/d' |
 			# there's actually only one obj, so just set it to the lib
 			for lib in $libs
 			do
-				objs="target/\$(CARGO_TARGET_DIR)/$lib"
+				objs="target/\$(if \$(CARGO_TARGET),\$(CARGO_TARGET)/\$(CARGO_TARGET_DIR),\$(CARGO_TARGET_DIR))/$lib"
 			done
 			libs=
 			# depends on the headers through cpython-sys
