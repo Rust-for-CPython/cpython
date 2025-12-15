@@ -4540,6 +4540,15 @@ else
     aarch64-apple-ios-simulator)
       CARGO_TARGET="aarch64-apple-ios-sim"
       ;;
+    *-apple-darwin*)
+      cargo_host="$host"
+      case "$cargo_host" in
+        arm64-apple-*)
+          cargo_host="aarch64${cargo_host#arm64}"
+          ;;
+      esac
+      CARGO_TARGET="${cargo_host%%-apple-darwin*}-apple-darwin"
+      ;;
     *)
       CARGO_TARGET="$host"
       ;;
