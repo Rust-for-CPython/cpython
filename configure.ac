@@ -4549,6 +4549,9 @@ else
       esac
       CARGO_TARGET="${cargo_host%%-apple-darwin*}-apple-darwin"
       ;;
+    *-pc-linux-*)
+      CARGO_TARGET=$(echo "$host" | sed 's/-pc-linux-/-unknown-linux-/')
+      ;;
     *)
       CARGO_TARGET="$host"
       ;;
