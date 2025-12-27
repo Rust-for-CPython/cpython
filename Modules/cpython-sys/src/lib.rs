@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unnecessary_transmutes)]
+#![allow(clippy::approx_constant)]
 
 use std::ffi::{c_char, c_int, c_void};
 

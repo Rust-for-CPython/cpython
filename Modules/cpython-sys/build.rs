@@ -9,10 +9,10 @@ fn main() {
         .expect("expected Modules/cpython-sys to live under the source tree");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let builddir = env::var("PYTHON_BUILD_DIR").ok();
-    if gil_disabled(&srcdir, builddir.as_deref()) {
+    if gil_disabled(srcdir, builddir.as_deref()) {
         println!("cargo:rustc-cfg=py_gil_disabled");
     }
-    generate_c_api_bindings(srcdir, builddir.as_deref(), &out_path.as_path());
+    generate_c_api_bindings(srcdir, builddir.as_deref(), out_path.as_path());
     // TODO(emmatyping): generate bindings to the internal parser API
     // The parser includes things slightly differently, so we should generate
     // it's bindings independently
@@ -27,10 +27,10 @@ fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
     candidates.push(srcdir.to_path_buf());
     for base in candidates {
         let path = base.join("pyconfig.h");
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if contents.contains("Py_GIL_DISABLED 1") {
-                return true;
-            }
+        if let Ok(contents) = std::fs::read_to_string(&path)
+            && contents.contains("Py_GIL_DISABLED 1")
+        {
+            return true;
         }
     }
     false
