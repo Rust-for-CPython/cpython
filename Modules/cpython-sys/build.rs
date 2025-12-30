@@ -46,6 +46,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     if let Some(build) = builddir {
         include_dirs.push(PathBuf::from(build));
     }
+
     for dir in include_dirs {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
