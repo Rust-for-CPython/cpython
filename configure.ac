@@ -4364,9 +4364,10 @@ AC_SUBST([CARGO_TARGET_DIR])
 AC_SUBST([CARGO_PROFILE])
 AC_SUBST([CARGO_TARGET])
 
-dnl do not enable Rust code if sanitizers are enabled
-dnl this should be fixed in the future to use unstable sanitizer support
-if test "$with_asan" == "yes" || "$with_msan" == "yes" || "$with_ubsan" == "yes" || "$with_tsan" == "yes";
+dnl do not enable Rust code if certain sanitizers are enabled
+dnl asan works fine, but msan requires the entire binary to be instrumented
+dnl ubsan and tsan cause the bindings generation to fail, so they are disabled for now
+if test "$with_msan" == "yes" || "$with_ubsan" == "yes" || "$with_tsan" == "yes";
 then
   HAVE_CARGO="no"
 fi

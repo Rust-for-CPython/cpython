@@ -16141,7 +16141,7 @@ fi
 
 
 
-if test "$with_asan" == "yes" || "$with_msan" == "yes" || "$with_ubsan" == "yes" || "$with_tsan" == "yes";
+if test "$with_msan" == "yes" || "$with_ubsan" == "yes" || "$with_tsan" == "yes";
 then
   HAVE_CARGO="no"
 fi
