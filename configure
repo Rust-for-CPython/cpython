@@ -13376,12 +13376,16 @@ then :
 printf "%s\n" "$withval" >&6; }
 BASECFLAGS="-fsanitize=address -fno-omit-frame-pointer $BASECFLAGS"
 LDFLAGS="-fsanitize=address $LDFLAGS"
+with_asan="yes"
 # ASan works by controlling memory allocation, our own malloc interferes.
 with_pymalloc="no"
 
 else case e in #(
-  e) { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
-printf "%s\n" "no" >&6; } ;;
+  e)
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+with_asan="no"
+ ;;
 esac
 fi
 
@@ -13433,6 +13437,7 @@ then :
 
 BASECFLAGS="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer $BASECFLAGS"
 LDFLAGS="-fsanitize=memory -fsanitize-memory-track-origins=2 $LDFLAGS"
+with_msan="yes"
 
 else case e in #(
   e) as_fn_error $? "The selected compiler doesn't support memory sanitizer" "$LINENO" 5 ;;
@@ -13441,10 +13446,14 @@ fi
 
 # MSan works by controlling memory allocation, our own malloc interferes.
 with_pymalloc="no"
+with_msan="no"
 
 else case e in #(
-  e) { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
-printf "%s\n" "no" >&6; } ;;
+  e)
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+with_msan="no"
+ ;;
 esac
 fi
 
@@ -16131,6 +16140,11 @@ fi
 
 
 
+
+if test "$with_asan" == "yes" || "$with_msan" == "yes" || "$with_ubsan" == "yes" || "$with_tsan" == "yes";
+then
+  HAVE_CARGO="no"
+fi
 
 
 
@@ -36187,3 +36201,4 @@ if test "$ac_cv_header_stdatomic_h" != "yes"; then
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&5
 printf "%s\n" "$as_me: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&6;}
 fi
+

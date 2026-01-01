@@ -3316,10 +3316,14 @@ AC_ARG_WITH([address_sanitizer],
 AC_MSG_RESULT([$withval])
 BASECFLAGS="-fsanitize=address -fno-omit-frame-pointer $BASECFLAGS"
 LDFLAGS="-fsanitize=address $LDFLAGS"
+with_asan="yes"
 # ASan works by controlling memory allocation, our own malloc interferes.
 with_pymalloc="no"
 ],
-[AC_MSG_RESULT([no])])
+[
+AC_MSG_RESULT([no])
+with_asan="no"
+])
 
 AC_MSG_CHECKING([for --with-memory-sanitizer])
 AC_ARG_WITH(
@@ -3333,11 +3337,16 @@ AC_MSG_RESULT([$withval])
 AX_CHECK_COMPILE_FLAG([-fsanitize=memory],[
 BASECFLAGS="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer $BASECFLAGS"
 LDFLAGS="-fsanitize=memory -fsanitize-memory-track-origins=2 $LDFLAGS"
+with_msan="yes"
 ],[AC_MSG_ERROR([The selected compiler doesn't support memory sanitizer])])
 # MSan works by controlling memory allocation, our own malloc interferes.
 with_pymalloc="no"
+with_msan="no"
 ],
-[AC_MSG_RESULT([no])])
+[
+AC_MSG_RESULT([no])
+with_msan="no"
+])
 
 AC_MSG_CHECKING([for --with-undefined-behavior-sanitizer])
 AC_ARG_WITH(
@@ -4354,6 +4363,13 @@ AC_SUBST([CARGO_HOME])
 AC_SUBST([CARGO_TARGET_DIR])
 AC_SUBST([CARGO_PROFILE])
 AC_SUBST([CARGO_TARGET])
+
+dnl do not enable Rust code if sanitizers are enabled
+dnl this should be fixed in the future to use unstable sanitizer support
+if test "$with_asan" == "yes" || "$with_msan" == "yes" || "$with_ubsan" == "yes" || "$with_tsan" == "yes";
+then
+  HAVE_CARGO="no"
+fi
 
 
 dnl detect sqlite3 from Emscripten emport
