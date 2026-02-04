@@ -908,7 +908,8 @@ SHLIBS
 CFLAGSFORSHARED
 LINKFORSHARED
 CCSHARED
-BLDSHARED
+BLDSHARED_ARGS
+BLDSHARED_EXE
 LDCXXSHARED
 LDSHARED
 SHLIB_SUFFIX
@@ -13503,6 +13504,7 @@ fi
 
 
 
+
 # SHLIB_SUFFIX is the extension of shared libraries `(including the dot!)
 # -- usually .so, .sl on HP-UX, .dll on Cygwin
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking the extension of shared libraries" >&5
@@ -13532,7 +13534,8 @@ if test -z "$LDSHARED"
 then
 	case $ac_sys_system/$ac_sys_release in
 	AIX*)
-		BLDSHARED="Modules/ld_so_aix \$(CC) -bI:Modules/python.exp"
+		BLDSHARED_EXE="Modules/ld_so_aix"
+    BLDSHARED_ARGS="\$(CC) -bI:Modules/python.exp"
 		LDSHARED="\$(LIBPL)/ld_so_aix \$(CC) -bI:\$(LIBPL)/python.exp"
 		;;
 	SunOS/5*)
@@ -13556,7 +13559,8 @@ then
 		LDCXXSHARED='$(CXX) -bundle'
 		if test "$enable_framework" ; then
 			# Link against the framework. All externals should be defined.
-			BLDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
+      BLDSHARED_EXE="$LDSHARED"
+      BLDSHARED_ARGS='$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDCXXSHARED="$LDCXXSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 		else
@@ -13567,14 +13571,15 @@ then
 	Darwin/1.4*|Darwin/5.*|Darwin/6.*)
 		LDSHARED='$(CC) -bundle'
 		LDCXXSHARED='$(CXX) -bundle'
+    BLDSHARED_EXE="$LDSHARED"
 		if test "$enable_framework" ; then
 			# Link against the framework. All externals should be defined.
-			BLDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
+      BLDSHARED_ARGS='$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDCXXSHARED="$LDCXXSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 		else
 			# No framework, use the Python app as bundle-loader
-			BLDSHARED="$LDSHARED "'-bundle_loader $(BUILDPYTHON)'
+			BLDSHARED_ARGS='-bundle_loader $(BUILDPYTHON)'
 			LDSHARED="$LDSHARED "'-bundle_loader $(BINDIR)/python$(VERSION)$(EXE)'
 			LDCXXSHARED="$LDCXXSHARED "'-bundle_loader $(BINDIR)/python$(VERSION)$(EXE)'
 		fi ;;
@@ -13595,13 +13600,15 @@ then
 			# building for OS X 10.3 and later
 			LDSHARED='$(CC) -bundle -undefined dynamic_lookup'
 			LDCXXSHARED='$(CXX) -bundle -undefined dynamic_lookup'
-			BLDSHARED="$LDSHARED"
+			BLDSHARED_EXE="$LDSHARED"
+      BLDSHARED_ARGS=""
 		fi
 		;;
 	iOS/*)
 		LDSHARED='$(CC) -dynamiclib -F . -framework $(PYTHONFRAMEWORK)'
 		LDCXXSHARED='$(CXX) -dynamiclib -F . -framework $(PYTHONFRAMEWORK)'
-		BLDSHARED="$LDSHARED"
+		BLDSHARED_EXE="$LDSHARED"
+    BLDSHARED_ARGS=""
 		;;
 	Emscripten*|WASI*)
 		LDSHARED='$(CC) -shared'
@@ -13661,18 +13668,25 @@ fi;;
 fi
 
 if test "$enable_wasm_dynamic_linking" = "yes" -a "$ac_sys_system" = "Emscripten"; then
-  BLDSHARED='$(CC) -shared -sSIDE_MODULE=1'
+  BLDSHARED_EXE='$(CC) -shared'
+  BLDSHARED_ARGS='-sSIDE_MODULE=1'
 fi
 
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $LDSHARED" >&5
 printf "%s\n" "$LDSHARED" >&6; }
 LDCXXSHARED=${LDCXXSHARED-$LDSHARED}
 
-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking BLDSHARED flags" >&5
-printf %s "checking BLDSHARED flags... " >&6; }
-BLDSHARED=${BLDSHARED-$LDSHARED}
-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $BLDSHARED" >&5
-printf "%s\n" "$BLDSHARED" >&6; }
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking BLDSHARED_EXE executable" >&5
+printf %s "checking BLDSHARED_EXE executable... " >&6; }
+BLDSHARED_EXE=${BLDSHARED_EXE-$LDSHARED}
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $BLDSHARED_EXE" >&5
+printf "%s\n" "$BLDSHARED_EXE" >&6; }
+
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking BLDSHARED_ARGS flags" >&5
+printf %s "checking BLDSHARED_ARGS flags... " >&6; }
+BLDSHARED_ARGS=${BLDSHARED_ARGS-}
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $BLDSHARED_ARGS" >&5
+printf "%s\n" "$BLDSHARED_ARGS" >&6; }
 
 # CCSHARED are the C *flags* used to create objects to go into a shared
 # library (module) -- this is only needed for a few systems
@@ -16106,6 +16120,8 @@ else
     CARGO_PROFILE='dev'
   fi
   # Set CARGO_TARGET for cross-compilation
+  # TODO(emmatyping): derive this in platform-triplet.c and set the Rust triple
+  # higher up
   case "$host" in
     aarch64-apple-ios-simulator)
       CARGO_TARGET="aarch64-apple-ios-sim"
@@ -36187,3 +36203,4 @@ if test "$ac_cv_header_stdatomic_h" != "yes"; then
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&5
 printf "%s\n" "$as_me: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&6;}
 fi
+

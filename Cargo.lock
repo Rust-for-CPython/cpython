@@ -6,6 +6,7 @@ version = 4
 name = "_base64"
 version = "0.1.0"
 dependencies = [
+ "cpython-build-helper",
  "cpython-sys",
 ]
 
@@ -68,6 +69,20 @@ dependencies = [
  "glob",
  "libc",
  "libloading",
+]
+
+[[package]]
+name = "cpython-build-helper"
+version = "0.1.0"
+dependencies = [
+ "shlex",
+]
+
+[[package]]
+name = "cpython-rust-staticlib"
+version = "0.1.0"
+dependencies = [
+ "_base64",
 ]
 
 [[package]]

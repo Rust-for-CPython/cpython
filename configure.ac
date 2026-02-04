@@ -3379,7 +3379,8 @@ with_tsan="no"
 AC_SUBST([SHLIB_SUFFIX])
 AC_SUBST([LDSHARED])
 AC_SUBST([LDCXXSHARED])
-AC_SUBST([BLDSHARED])
+AC_SUBST([BLDSHARED_EXE])
+AC_SUBST([BLDSHARED_ARGS])
 AC_SUBST([CCSHARED])
 AC_SUBST([LINKFORSHARED])
 
@@ -3409,7 +3410,8 @@ if test -z "$LDSHARED"
 then
 	case $ac_sys_system/$ac_sys_release in
 	AIX*)
-		BLDSHARED="Modules/ld_so_aix \$(CC) -bI:Modules/python.exp"
+		BLDSHARED_EXE="Modules/ld_so_aix"
+    BLDSHARED_ARGS="\$(CC) -bI:Modules/python.exp"
 		LDSHARED="\$(LIBPL)/ld_so_aix \$(CC) -bI:\$(LIBPL)/python.exp"
 		;;
 	SunOS/5*)
@@ -3433,7 +3435,8 @@ then
 		LDCXXSHARED='$(CXX) -bundle'
 		if test "$enable_framework" ; then
 			# Link against the framework. All externals should be defined.
-			BLDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
+      BLDSHARED_EXE="$LDSHARED"
+      BLDSHARED_ARGS='$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDCXXSHARED="$LDCXXSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 		else
@@ -3444,14 +3447,15 @@ then
 	Darwin/1.4*|Darwin/5.*|Darwin/6.*)
 		LDSHARED='$(CC) -bundle'
 		LDCXXSHARED='$(CXX) -bundle'
+    BLDSHARED_EXE="$LDSHARED"
 		if test "$enable_framework" ; then
 			# Link against the framework. All externals should be defined.
-			BLDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
+      BLDSHARED_ARGS='$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDSHARED="$LDSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 			LDCXXSHARED="$LDCXXSHARED "'$(PYTHONFRAMEWORKPREFIX)/$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
 		else
 			# No framework, use the Python app as bundle-loader
-			BLDSHARED="$LDSHARED "'-bundle_loader $(BUILDPYTHON)'
+			BLDSHARED_ARGS='-bundle_loader $(BUILDPYTHON)'
 			LDSHARED="$LDSHARED "'-bundle_loader $(BINDIR)/python$(VERSION)$(EXE)'
 			LDCXXSHARED="$LDCXXSHARED "'-bundle_loader $(BINDIR)/python$(VERSION)$(EXE)'
 		fi ;;
@@ -3472,13 +3476,15 @@ then
 			# building for OS X 10.3 and later
 			LDSHARED='$(CC) -bundle -undefined dynamic_lookup'
 			LDCXXSHARED='$(CXX) -bundle -undefined dynamic_lookup'
-			BLDSHARED="$LDSHARED"
+			BLDSHARED_EXE="$LDSHARED"
+      BLDSHARED_ARGS=""
 		fi
 		;;
 	iOS/*)
 		LDSHARED='$(CC) -dynamiclib -F . -framework $(PYTHONFRAMEWORK)'
 		LDCXXSHARED='$(CXX) -dynamiclib -F . -framework $(PYTHONFRAMEWORK)'
-		BLDSHARED="$LDSHARED"
+		BLDSHARED_EXE="$LDSHARED"
+    BLDSHARED_ARGS=""
 		;;
 	Emscripten*|WASI*)
 		LDSHARED='$(CC) -shared'
@@ -3535,18 +3541,24 @@ then
 	esac
 fi
 
-dnl Emscripten's emconfigure sets LDSHARED. Set BLDSHARED outside the
-dnl test -z $LDSHARED block to configure BLDSHARED for side module support.
+dnl Emscripten's emconfigure sets LDSHARED. Set BLDSHARED_EXE and BLDSHARED_ARGS
+dnl outside the test -z $LDSHARED block to configure BLDSHARED for side module
+dnl support.
 if test "$enable_wasm_dynamic_linking" = "yes" -a "$ac_sys_system" = "Emscripten"; then
-  BLDSHARED='$(CC) -shared -sSIDE_MODULE=1'
+  BLDSHARED_EXE='$(CC) -shared'
+  BLDSHARED_ARGS='-sSIDE_MODULE=1'
 fi
 
 AC_MSG_RESULT([$LDSHARED])
 LDCXXSHARED=${LDCXXSHARED-$LDSHARED}
 
-AC_MSG_CHECKING([BLDSHARED flags])
-BLDSHARED=${BLDSHARED-$LDSHARED}
-AC_MSG_RESULT([$BLDSHARED])
+AC_MSG_CHECKING([BLDSHARED_EXE executable])
+BLDSHARED_EXE=${BLDSHARED_EXE-$LDSHARED}
+AC_MSG_RESULT([$BLDSHARED_EXE])
+
+AC_MSG_CHECKING([BLDSHARED_ARGS flags])
+BLDSHARED_ARGS=${BLDSHARED_ARGS-}
+AC_MSG_RESULT([$BLDSHARED_ARGS])
 
 # CCSHARED are the C *flags* used to create objects to go into a shared
 # library (module) -- this is only needed for a few systems
@@ -4329,6 +4341,8 @@ else
     CARGO_PROFILE='dev'
   fi
   # Set CARGO_TARGET for cross-compilation
+  # TODO(emmatyping): derive this in platform-triplet.c and set the Rust triple
+  # higher up
   case "$host" in
     aarch64-apple-ios-simulator)
       CARGO_TARGET="aarch64-apple-ios-sim"

@@ -6,6 +6,10 @@ edition = "2024"
 [dependencies]
 cpython-sys ={ path = "../cpython-sys" }
 
+[build-dependencies]
+cpython-build-helper = { path = "../cpython-build-helper" }
+
 [lib]
 name = "_base64"
-crate-type = ["staticlib"]
+# For shared builds, we generate a c dynamic library. Static builds use the rlib
+crate-type = ["cdylib", "rlib"]
