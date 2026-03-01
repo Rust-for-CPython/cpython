@@ -296,22 +296,30 @@ sed -e 's/[ 	]*#.*//' -e '/^[ 	]*$/d' |
 			objs=
 			libs=
 
-			for mod in $mods
-			do
-				rust_shared="target/\$(if \$(CARGO_TARGET),\$(CARGO_TARGET)/\$(CARGO_TARGET_DIR),\$(CARGO_TARGET_DIR))/lib$mod\$(SHLIB_SUFFIX)"
-				file="$srcdir/$mod\$(EXT_SUFFIX)"
-				case $doconfig in
-				no)
+			case $doconfig in
+			no)
+				# Shared build: build each Rust module as a cdylib (.so)
+				for mod in $mods
+				do
+					rust_shared="target/\$(if \$(CARGO_TARGET),\$(CARGO_TARGET)/\$(CARGO_TARGET_DIR),\$(CARGO_TARGET_DIR))/lib$mod\$(SHLIB_SUFFIX)"
+					file="$srcdir/$mod\$(EXT_SUFFIX)"
 					SHAREDMODS="$SHAREDMODS $file"
 					BUILT_SHARED="$BUILT_SHARED $mod"
-					;;
-				esac
-				# depends on the headers through cpython-sys
-				rule="$rust_shared: cpython-sys \$(srcdir)/Cargo.toml \$(srcdir)/Cargo.lock \$(srcdir)/$srcdir/$manifest $prefixed_srcs \$(PYTHON_HEADERS) \$(MODULE_${mods_upper}_LDEPS) \$(LIBRARY)"
-				rule="$rule; CARGO_TARGET_DIR=\$(abs_builddir)/target PYTHON_BUILD_DIR=\$(abs_builddir) RUST_SHARED_BUILD=\$(PY_ENABLE_SHARED) \$(CARGO_HOME)/bin/cargo build -vvv --lib --locked --package ${mod} --profile \$(CARGO_PROFILE) \$(if \$(CARGO_TARGET),--target=\$(CARGO_TARGET)) --manifest-path \$(srcdir)/Cargo.toml"
-				echo "$rule" >>$rulesf
-				echo "$file: $rust_shared; mv $rust_shared $file" >>$rulesf
-			done
+					# depends on the headers through cpython-sys
+					rule="$rust_shared: cpython-sys \$(srcdir)/Cargo.toml \$(srcdir)/Cargo.lock \$(srcdir)/$srcdir/$manifest $prefixed_srcs \$(PYTHON_HEADERS) \$(MODULE_${mods_upper}_LDEPS) \$(LIBRARY)"
+					rule="$rule; CARGO_TARGET_DIR=\$(abs_builddir)/target PYTHON_BUILD_DIR=\$(abs_builddir) RUST_SHARED_BUILD=\$(PY_ENABLE_SHARED) BLDSHARED_ARGS=\"\$(BLDSHARED_ARGS)\" \$(if \$(CARGO_TARGET_LINKER_ENV),\$(CARGO_TARGET_LINKER_ENV)=\$(CC)) \$(CARGO_HOME)/bin/cargo build -vvv --lib --locked --package ${mod} --profile \$(CARGO_PROFILE) \$(if \$(CARGO_TARGET),--target=\$(CARGO_TARGET)) --manifest-path \$(srcdir)/Cargo.toml"
+					echo "$rule" >>$rulesf
+					echo "$file: $rust_shared; mv $rust_shared $file" >>$rulesf
+				done
+				;;
+			yes)
+				# Static build: Rust modules are built as part of cpython-rust-staticlib.
+				# The dependency on cpython-rust-staticlib is in Makefile.pre.in
+				# (via RUST_STATICLIB_DEP on the BUILDPYTHON rule).
+				rust_staticlib="target/\$(if \$(CARGO_TARGET),\$(CARGO_TARGET)/\$(CARGO_TARGET_DIR),\$(CARGO_TARGET_DIR))/libcpython_rust_staticlib.a"
+				LIBS="$LIBS $rust_staticlib"
+				;;
+			esac
 		fi
 	done
 

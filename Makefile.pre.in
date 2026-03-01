@@ -62,6 +62,8 @@ CARGO_HOME=@CARGO_HOME@
 CARGO_TARGET_DIR=@CARGO_TARGET_DIR@
 CARGO_PROFILE=@CARGO_PROFILE@
 CARGO_TARGET=@CARGO_TARGET@
+CARGO_TARGET_LINKER_ENV=@CARGO_TARGET_LINKER_ENV@
+RUST_STATICLIB_DEP=@RUST_STATICLIB_DEP@
 
 GNULD=		@GNULD@
 
@@ -989,7 +991,7 @@ clinic-tests: check-clean-src $(srcdir)/Lib/test/clinic.test.c
 	$(PYTHON_FOR_REGEN) $(srcdir)/Tools/clinic/clinic.py -f $(srcdir)/Lib/test/clinic.test.c
 
 # Build the interpreter
-$(BUILDPYTHON):	Programs/python.o $(LINK_PYTHON_DEPS)
+$(BUILDPYTHON):	Programs/python.o $(LINK_PYTHON_DEPS) $(RUST_STATICLIB_DEP)
 	$(LINKCC) $(PY_CORE_LDFLAGS) $(LINKFORSHARED) -o $@ Programs/python.o $(LINK_PYTHON_OBJS) $(LIBS) $(MODLIBS) $(SYSLIBS)
 
 platform: $(PYTHON_FOR_BUILD_DEPS) pybuilddir.txt
@@ -3375,7 +3377,12 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
 # Module dependencies and platform-specific files
 
 cpython-sys: Modules/cpython-sys/Cargo.toml Modules/cpython-sys/build.rs Modules/cpython-sys/wrapper.h Modules/cpython-sys/parser.h
-	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) RUST_SHARED_BUILD=\$(PY_ENABLE_SHARED) \$(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
+	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) $(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
+
+RUST_STATICLIB_A= target/$(if $(CARGO_TARGET),$(CARGO_TARGET)/$(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR))/libcpython_rust_staticlib.a
+
+cpython-rust-staticlib: cpython-sys
+	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) $(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-rust-staticlib --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
 
 # force rebuild when header file or module build flavor (static/shared) is changed
 MODULE_DEPS_STATIC=Modules/config.c

@@ -7,4 +7,3 @@ edition = "2024"
 
 [build-dependencies]
 bindgen = "0.72.1"
-cpython-build-helper = { path = "../cpython-build-helper" }

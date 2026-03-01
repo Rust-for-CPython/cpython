@@ -90,7 +90,6 @@ name = "cpython-sys"
 version = "0.1.0"
 dependencies = [
  "bindgen",
- "cpython-build-helper",
 ]
 
 [[package]]

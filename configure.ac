@@ -4364,10 +4364,18 @@ else
       ;;
   esac
 fi
+dnl Compute the CARGO_TARGET_<triple>_LINKER env var name so we can
+dnl tell Cargo which linker to use for the target platform.
+if test -n "$CARGO_TARGET"; then
+  CARGO_TARGET_LINKER_ENV="CARGO_TARGET_$(echo "$CARGO_TARGET" | tr 'a-z-' 'A-Z_')_LINKER"
+else
+  CARGO_TARGET_LINKER_ENV=""
+fi
 AC_SUBST([CARGO_HOME])
 AC_SUBST([CARGO_TARGET_DIR])
 AC_SUBST([CARGO_PROFILE])
 AC_SUBST([CARGO_TARGET])
+AC_SUBST([CARGO_TARGET_LINKER_ENV])
 
 
 dnl detect sqlite3 from Emscripten emport
@@ -7881,6 +7889,15 @@ AS_CASE([$host_cpu],
   [MODULE_BUILDTYPE=${MODULE_BUILDTYPE:-shared}]
 )
 AC_SUBST([MODULE_BUILDTYPE])
+
+dnl Set RUST_STATICLIB_DEP to cpython-rust-staticlib when building Rust
+dnl modules statically so that the python binary depends on it.
+if test "$HAVE_CARGO" != "no" -a "$MODULE_BUILDTYPE" = "static"; then
+  RUST_STATICLIB_DEP=cpython-rust-staticlib
+else
+  RUST_STATICLIB_DEP=
+fi
+AC_SUBST([RUST_STATICLIB_DEP])
 
 dnl _MODULE_BLOCK_ADD([VAR], [VALUE])
 dnl internal: adds $1=quote($2) to MODULE_BLOCK

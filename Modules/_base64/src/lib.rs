@@ -115,7 +115,6 @@ impl Drop for BorrowedBuffer {
 /// # Safety
 /// `module` must be a valid pointer of PyObject representing the module.
 /// `args` must be a valid pointer to an array of valid PyObject pointers with length `nargs`.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn standard_b64encode(
     _module: *mut PyObject,
     args: *mut *mut PyObject,
@@ -193,13 +192,11 @@ fn standard_b64encode_impl(source: &PyObject) -> Result<*mut PyObject, ()> {
     Ok(result)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn _base64_clear(_obj: *mut PyObject) -> c_int {
     //TODO
     0
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn _base64_free(_o: *mut c_void) {
     //TODO
 }

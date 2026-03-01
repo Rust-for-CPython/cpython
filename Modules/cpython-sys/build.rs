@@ -1,10 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use cpython_build_helper::print_linker_args;
-
 fn main() {
-    print_linker_args();
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let srcdir = manifest_dir
         .parent()
