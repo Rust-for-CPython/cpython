@@ -3,15 +3,42 @@ use std::env;
 /// Print necessary link arguments for the library depending on the build
 /// configuration (static or shared)
 pub fn print_linker_args() {
-    let shared_build = env::var("RUST_SHARED_BUILD").expect("RUST_SHARED_BUILD not set in Makefile?");
-    if shared_build == "1" {
-        let build_shared_args =
-            env::var("BLDSHARED_ARGS").expect("BLDSHARED_ARGS not set in Makefile?");
-        // TODO(emmatyping): Ideally, we would not need to split the args here and take shlex
-        // as a dependency.
-        for arg in shlex::split(&build_shared_args).expect("Invalid BUILDSHARED_ARGS") {
-            println!("cargo:rustc-link-arg={}", arg);
+    let target = env::var("TARGET").unwrap_or_default();
+
+    // On Apple platforms (macOS, iOS), Cargo's cdylib produces a Mach-O
+    // dynamiclib (via -dynamiclib), but CPython's C extensions are built as
+    // bundles (via -bundle). Unlike bundles, dynamiclibs require all symbols
+    // to be resolved at link time. Pass -undefined dynamic_lookup so that
+    // Python C API symbols are resolved at load time by the interpreter.
+    if target.contains("apple") {
+        println!("cargo:rustc-cdylib-link-arg=-undefined");
+        println!("cargo:rustc-cdylib-link-arg=dynamic_lookup");
+    }
+
+    // Pass platform-specific shared link arguments (e.g. PY_CORE_LDFLAGS)
+    // from the CPython build system.
+    if let Ok(args) = env::var("BLDSHARED_ARGS") {
+        let args = shlex::split(&args).expect("Invalid BLDSHARED_ARGS");
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            // -bundle_loader is incompatible with Cargo's cdylib on macOS
+            // (it only works with -bundle, not -dynamiclib). Skip it and
+            // its argument.
+            if arg == "-bundle_loader" {
+                iter.next(); // skip the path argument
+                continue;
+            }
+            println!("cargo:rustc-cdylib-link-arg={}", arg);
         }
     }
+
+    // On Android (and Cygwin), extension modules must link against libpython.
+    // LIBPYTHON is set by the CPython build system on these platforms.
+    if let Ok(libpython) = env::var("LIBPYTHON") {
+        for arg in shlex::split(&libpython).expect("Invalid LIBPYTHON") {
+            println!("cargo:rustc-cdylib-link-arg={}", arg);
+        }
+    }
+
     // Static linker configuration is in cpython-rust-staticlib
 }
