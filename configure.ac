@@ -4371,11 +4371,19 @@ if test -n "$CARGO_TARGET"; then
 else
   CARGO_TARGET_LINKER_ENV=""
 fi
+dnl Cargo's cdylib crate type uses the platform's native shared library
+dnl extension, which differs from CPython's SHLIB_SUFFIX on macOS/iOS
+dnl (CPython uses .so, Cargo uses .dylib).
+case "$host" in
+  *-apple-*)  CARGO_DYLIB_SUFFIX=".dylib";;
+  *)          CARGO_DYLIB_SUFFIX="$SHLIB_SUFFIX";;
+esac
 AC_SUBST([CARGO_HOME])
 AC_SUBST([CARGO_TARGET_DIR])
 AC_SUBST([CARGO_PROFILE])
 AC_SUBST([CARGO_TARGET])
 AC_SUBST([CARGO_TARGET_LINKER_ENV])
+AC_SUBST([CARGO_DYLIB_SUFFIX])
 
 
 dnl detect sqlite3 from Emscripten emport

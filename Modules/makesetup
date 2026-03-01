@@ -301,7 +301,7 @@ sed -e 's/[ 	]*#.*//' -e '/^[ 	]*$/d' |
 				# Shared build: build each Rust module as a cdylib (.so)
 				for mod in $mods
 				do
-					rust_shared="target/\$(if \$(CARGO_TARGET),\$(CARGO_TARGET)/\$(CARGO_TARGET_DIR),\$(CARGO_TARGET_DIR))/lib$mod\$(SHLIB_SUFFIX)"
+					rust_shared="target/\$(if \$(CARGO_TARGET),\$(CARGO_TARGET)/\$(CARGO_TARGET_DIR),\$(CARGO_TARGET_DIR))/lib$mod\$(CARGO_DYLIB_SUFFIX)"
 					file="$srcdir/$mod\$(EXT_SUFFIX)"
 					SHAREDMODS="$SHAREDMODS $file"
 					BUILT_SHARED="$BUILT_SHARED $mod"
