@@ -86,16 +86,33 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
         }
     }
 
-    // Android NDK: the cross-compiler binary knows its own sysroot
-    // implicitly, but bindgen's libclang does not. The NDK sysroot is
-    // at .../toolchains/llvm/prebuilt/<host>/sysroot, which is a sibling
-    // of the bin/ directory containing the compiler.
+    // WASI SDK: WASI_SDK_PATH is set by Tools/wasm/wasi/__main__.py.
+    // The sysroot is at $WASI_SDK_PATH/share/wasi-sysroot.
+    if !have_sysroot && target.contains("wasi") {
+        if let Ok(sdk_path) = env::var("WASI_SDK_PATH") {
+            let sysroot = PathBuf::from(&sdk_path)
+                .join("share")
+                .join("wasi-sysroot");
+            if sysroot.is_dir() {
+                builder = builder.clang_arg(format!(
+                    "--sysroot={}",
+                    sysroot.display()
+                ));
+                have_sysroot = true;
+            }
+        }
+    }
+
+    // Android NDK: ANDROID_HOME is set by the CI/user environment, and
+    // Android/android-env.sh sets CC to the NDK clang binary at:
+    //   $ANDROID_HOME/ndk/<ver>/toolchains/llvm/prebuilt/<host>/bin/<triple>-clang
+    // The sysroot is a sibling of bin/:
+    //   .../toolchains/llvm/prebuilt/<host>/sysroot
     if !have_sysroot && target.contains("android") {
         if let Ok(cc) = env::var("PY_CC") {
             if let Some(parts) = shlex::split(&cc) {
                 if let Some(binary) = parts.first() {
-                    let cc_path = Path::new(binary);
-                    if let Some(bin_dir) = cc_path.parent() {
+                    if let Some(bin_dir) = Path::new(binary).parent() {
                         let sysroot = bin_dir.with_file_name("sysroot");
                         if sysroot.is_dir() {
                             builder = builder.clang_arg(format!(
