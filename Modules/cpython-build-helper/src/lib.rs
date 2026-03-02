@@ -33,9 +33,19 @@ pub fn print_linker_args() {
     }
 
     // On Android (and Cygwin), extension modules must link against libpython.
-    // LIBPYTHON is set by the CPython build system on these platforms.
+    // LIBPYTHON is set by the CPython build system on these platforms and
+    // typically contains "-L. -lpython3.X". The "-L." is relative to the
+    // make build directory, so resolve it to an absolute path using
+    // PYTHON_BUILD_DIR.
     if let Ok(libpython) = env::var("LIBPYTHON") {
+        let builddir = env::var("PYTHON_BUILD_DIR").ok();
         for arg in shlex::split(&libpython).expect("Invalid LIBPYTHON") {
+            if arg == "-L." {
+                if let Some(ref dir) = builddir {
+                    println!("cargo:rustc-cdylib-link-arg=-L{}", dir);
+                    continue;
+                }
+            }
             println!("cargo:rustc-cdylib-link-arg={}", arg);
         }
     }
