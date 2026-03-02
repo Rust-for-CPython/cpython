@@ -33,32 +33,6 @@ fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
     false
 }
 
-/// Map a Rust target triple to the corresponding LLVM/clang target triple.
-/// Most are identical, but some platforms differ:
-/// - Apple: aarch64 → arm64, darwin → macosx, ios-sim → ios-simulator
-/// - RISC-V: riscv64gc → riscv64, riscv32gc → riscv32
-/// - WASI threads: wasip1-threads → wasi
-fn rust_target_to_llvm(rust_target: &str) -> String {
-    match rust_target {
-        "aarch64-apple-darwin" => "arm64-apple-macosx".into(),
-        "x86_64-apple-darwin" => "x86_64-apple-macosx".into(),
-        "aarch64-apple-ios" => "arm64-apple-ios".into(),
-        "aarch64-apple-ios-sim" => "arm64-apple-ios-simulator".into(),
-        "x86_64-apple-ios" => "x86_64-apple-ios-simulator".into(),
-        "wasm32-wasip1-threads" => "wasm32-wasi".into(),
-        other => {
-            // riscv64gc-* → riscv64-*, riscv32gc-* → riscv32-*
-            if let Some(rest) = other.strip_prefix("riscv64gc-") {
-                return format!("riscv64-{rest}");
-            }
-            if let Some(rest) = other.strip_prefix("riscv32gc-") {
-                return format!("riscv32-{rest}");
-            }
-            other.into()
-        }
-    }
-}
-
 fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Path) {
     let mut builder = bindgen::Builder::default().header("wrapper.h");
 
@@ -69,13 +43,9 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // LLVM_TARGET is the clang/LLVM triple which may differ from the Rust
     // target (e.g. arm64-apple-macosx vs aarch64-apple-darwin, or
     // riscv64-unknown-linux-gnu vs riscv64gc-unknown-linux-gnu).
-    // Falls back to Cargo's TARGET with known Rust→LLVM mappings.
+    // Falls back to Cargo's TARGET if LLVM_TARGET is not set.
     let target = env::var("LLVM_TARGET")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            env::var("TARGET").ok().map(|t| rust_target_to_llvm(&t))
-        })
+        .or_else(|_| env::var("TARGET"))
         .unwrap_or_default();
     if !target.is_empty() {
         builder = builder.clang_arg(format!("--target={}", target));
