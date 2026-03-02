@@ -1154,6 +1154,8 @@ AC_MSG_CHECKING([for the platform triplet based on compiler characteristics])
 if $CPP $CPPFLAGS $srcdir/Misc/platform_triplet.c >conftest.out 2>/dev/null; then
   PLATFORM_TRIPLET=`grep '^PLATFORM_TRIPLET=' conftest.out | tr -d ' 	'`
   PLATFORM_TRIPLET="${PLATFORM_TRIPLET@%:@PLATFORM_TRIPLET=}"
+  RUST_TARGET=`grep '^RUST_TARGET=' conftest.out | tr -d ' 	'`
+  RUST_TARGET="${RUST_TARGET@%:@RUST_TARGET=}"
   AC_MSG_RESULT([$PLATFORM_TRIPLET])
 else
   AC_MSG_RESULT([none])
@@ -4340,29 +4342,15 @@ else
     CARGO_TARGET_DIR='debug'
     CARGO_PROFILE='dev'
   fi
-  # Set CARGO_TARGET for cross-compilation
-  # TODO(emmatyping): derive this in platform-triplet.c and set the Rust triple
-  # higher up
-  case "$host" in
-    aarch64-apple-ios-simulator)
-      CARGO_TARGET="aarch64-apple-ios-sim"
-      ;;
-    *-apple-darwin*)
-      cargo_host="$host"
-      case "$cargo_host" in
-        arm64-apple-*)
-          cargo_host="aarch64${cargo_host#arm64}"
-          ;;
-      esac
-      CARGO_TARGET="${cargo_host%%-apple-darwin*}-apple-darwin"
-      ;;
-    *-pc-linux-*)
-      CARGO_TARGET=$(echo "$host" | sed 's/-pc-linux-/-unknown-linux-/')
-      ;;
-    *)
-      CARGO_TARGET="$host"
-      ;;
-  esac
+  # RUST_TARGET is detected from Misc/platform_triplet.c using the
+  # C preprocessor, giving us the correct Rust target triple for the
+  # platform being compiled for.
+  CARGO_TARGET="$RUST_TARGET"
+  if test -z "$CARGO_TARGET" || test "$CARGO_TARGET" = "unknown"; then
+    AC_MSG_ERROR([Could not determine a Rust target triple for this platform.
+      Rust may not support this target. Set CARGO_TARGET manually or
+      disable Rust support.])
+  fi
 fi
 dnl Compute the CARGO_TARGET_<triple>_LINKER env var name so we can
 dnl tell Cargo which linker to use for the target platform.
