@@ -51,15 +51,15 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
         builder = builder.clang_arg(format!("--target={}", target));
     }
 
-    // Extract cross-compilation flags from the C compiler command (PY_CC)
-    // and preprocessor flags (PY_CPPFLAGS). These provide the sysroot and
-    // include paths that bindgen's clang needs to find system headers when
-    // cross-compiling.
+    // Extract cross-compilation flags from the C compiler command (PY_CC),
+    // preprocessor flags (PY_CPPFLAGS), and compiler flags (PY_CFLAGS).
+    // These provide the sysroot, include paths, and defines that bindgen's
+    // clang needs when cross-compiling.
     //
-    // - WASI: the sysroot is embedded in CC ("clang --sysroot=...")
-    // - iOS: -isysroot in CPPFLAGS points to the SDK
+    // - WASI: sysroot in CC, -D_WASI_EMULATED_SIGNAL in CFLAGS
+    // - iOS: -isysroot in CPPFLAGS
     let mut have_sysroot = false;
-    for env_name in ["PY_CC", "PY_CPPFLAGS"] {
+    for env_name in ["PY_CC", "PY_CPPFLAGS", "PY_CFLAGS"] {
         if let Ok(value) = env::var(env_name) {
             if let Some(flags) = shlex::split(&value) {
                 let mut iter = flags.iter().peekable();
@@ -126,13 +126,15 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
         }
     }
 
-    // Always search the source dir and the public headers.
-    let mut include_dirs = vec![srcdir.to_path_buf(), srcdir.join("Include")];
-    // Include the build directory if provided; out-of-tree builds place
-    // the generated pyconfig.h there.
+    // Include the build directory first so that cross-build pyconfig.h
+    // takes precedence over any pyconfig.h in the source tree (which may
+    // be from a native build with different settings like LONG_BIT).
+    let mut include_dirs = Vec::new();
     if let Some(build) = builddir {
         include_dirs.push(PathBuf::from(build));
     }
+    include_dirs.push(srcdir.to_path_buf());
+    include_dirs.push(srcdir.join("Include"));
 
     for dir in include_dirs {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
