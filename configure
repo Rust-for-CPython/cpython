@@ -888,6 +888,7 @@ TCLTK_LIBS
 TCLTK_CFLAGS
 LIBSQLITE3_LIBS
 LIBSQLITE3_CFLAGS
+LLVM_TARGET
 CARGO_DYLIB_SUFFIX
 CARGO_TARGET_LINKER_ENV
 CARGO_TARGET
@@ -7179,6 +7180,11 @@ if $CPP $CPPFLAGS $srcdir/Misc/platform_triplet.c >conftest.out 2>/dev/null; the
   PLATFORM_TRIPLET="${PLATFORM_TRIPLET#PLATFORM_TRIPLET=}"
   RUST_TARGET=`grep '^RUST_TARGET=' conftest.out | tr -d ' 	'`
   RUST_TARGET="${RUST_TARGET#RUST_TARGET=}"
+    LLVM_TARGET=`grep '^LLVM_TARGET=' conftest.out | tr -d ' 	'`
+  LLVM_TARGET="${LLVM_TARGET#LLVM_TARGET=}"
+  if test -z "$LLVM_TARGET"; then
+    LLVM_TARGET="$RUST_TARGET"
+  fi
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $PLATFORM_TRIPLET" >&5
 printf "%s\n" "$PLATFORM_TRIPLET" >&6; }
 else
@@ -16143,6 +16149,7 @@ case "$host" in
   *-apple-*)  CARGO_DYLIB_SUFFIX=".dylib";;
   *)          CARGO_DYLIB_SUFFIX="$SHLIB_SUFFIX";;
 esac
+
 
 
 

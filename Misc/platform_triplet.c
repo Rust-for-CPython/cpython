@@ -3,6 +3,10 @@
  *
  * Also detects the closest Rust target triple for cargo/rustc:
  * cc -E Misc/platform_triplet.c | grep '^RUST_TARGET=' | tr -d ' '
+ *
+ * And the LLVM/clang target triple (for bindgen), only when it differs
+ * from RUST_TARGET:
+ * cc -E Misc/platform_triplet.c | grep '^LLVM_TARGET=' | tr -d ' '
  */
 #undef bfin
 #undef cris
@@ -145,6 +149,7 @@ RUST_TARGET=arm-linux-androideabi
 #     elif defined(_ABI64) && _MIPS_SIM == _ABI64
 #      define LIBC_MIPS musl
 #      define RUST_LIBC_MIPS muslabi64
+#      define LLVM_LIBC_MIPS musl
 #     else
 #      error unknown mips sim value
 #     endif
@@ -242,12 +247,18 @@ RUST_TARGET=mipsisa32r6-unknown-linux-RUST_LIBC_MIPS
 #   if defined(_MIPSEL) && defined(__mips64)
 PLATFORM_TRIPLET=mips64el-linux-LIBC_MIPS
 RUST_TARGET=mips64el-unknown-linux-RUST_LIBC_MIPS
+#    ifdef LLVM_LIBC_MIPS
+LLVM_TARGET=mips64el-unknown-linux-LLVM_LIBC_MIPS
+#    endif
 #   elif defined(_MIPSEL)
 PLATFORM_TRIPLET=mipsel-linux-LIBC_MIPS
 RUST_TARGET=mipsel-unknown-linux-RUST_LIBC_MIPS
 #   elif defined(__mips64)
 PLATFORM_TRIPLET=mips64-linux-LIBC_MIPS
 RUST_TARGET=mips64-unknown-linux-RUST_LIBC_MIPS
+#    ifdef LLVM_LIBC_MIPS
+LLVM_TARGET=mips64-unknown-linux-LLVM_LIBC_MIPS
+#    endif
 #   else
 PLATFORM_TRIPLET=mips-linux-LIBC_MIPS
 RUST_TARGET=mips-unknown-linux-RUST_LIBC_MIPS
@@ -286,9 +297,11 @@ RUST_TARGET=sparc-unknown-linux-RUST_LIBC
 #  if __riscv_xlen == 32
 PLATFORM_TRIPLET=riscv32-linux-LIBC
 RUST_TARGET=riscv32gc-unknown-linux-RUST_LIBC
+LLVM_TARGET=riscv32-unknown-linux-RUST_LIBC
 #  elif __riscv_xlen == 64
 PLATFORM_TRIPLET=riscv64-linux-LIBC
 RUST_TARGET=riscv64gc-unknown-linux-RUST_LIBC
+LLVM_TARGET=riscv64-unknown-linux-RUST_LIBC
 #  else
 #   error unknown platform triplet
 #  endif
@@ -326,21 +339,26 @@ RUST_TARGET=i686-unknown-hurd-gnu
 #      if __x86_64__
 PLATFORM_TRIPLET=x86_64-iphonesimulator
 RUST_TARGET=x86_64-apple-ios
+LLVM_TARGET=x86_64-apple-ios-simulator
 #      else
 PLATFORM_TRIPLET=arm64-iphonesimulator
 RUST_TARGET=aarch64-apple-ios-sim
+LLVM_TARGET=arm64-apple-ios-simulator
 #      endif
 #    else
 PLATFORM_TRIPLET=arm64-iphoneos
 RUST_TARGET=aarch64-apple-ios
+LLVM_TARGET=arm64-apple-ios
 #    endif
 // Older macOS SDKs do not define TARGET_OS_OSX
 #  elif !defined(TARGET_OS_OSX) || TARGET_OS_OSX
 PLATFORM_TRIPLET=darwin
 #    if defined(__x86_64__)
 RUST_TARGET=x86_64-apple-darwin
+LLVM_TARGET=x86_64-apple-macosx
 #    elif defined(__aarch64__)
 RUST_TARGET=aarch64-apple-darwin
+LLVM_TARGET=arm64-apple-macosx
 #    else
 RUST_TARGET=unknown
 #    endif
@@ -358,6 +376,7 @@ RUST_TARGET=wasm32-unknown-emscripten
 #    if defined(_REENTRANT)
 PLATFORM_TRIPLET=wasm32-wasi-threads
 RUST_TARGET=wasm32-wasip1-threads
+LLVM_TARGET=wasm32-wasi
 #    else
 PLATFORM_TRIPLET=wasm32-wasi
 RUST_TARGET=wasm32-wasip1

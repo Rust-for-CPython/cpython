@@ -40,27 +40,70 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     builder = builder.clang_arg("-w");
 
     // Tell clang the correct target triple for cross-compilation.
-    // Without this, bindgen uses the host target which causes errors like
-    // "thread-local storage is not supported" on iOS or missing headers
-    // on Android/WASI.
-    if let Ok(target) = env::var("TARGET") {
+    // LLVM_TARGET is the clang/LLVM triple which may differ from the Rust
+    // target (e.g. arm64-apple-macosx vs aarch64-apple-darwin, or
+    // riscv64-unknown-linux-gnu vs riscv64gc-unknown-linux-gnu).
+    // Falls back to Cargo's TARGET if LLVM_TARGET is not set.
+    let target = env::var("LLVM_TARGET")
+        .or_else(|_| env::var("TARGET"))
+        .unwrap_or_default();
+    if !target.is_empty() {
         builder = builder.clang_arg(format!("--target={}", target));
     }
 
-    // Forward cross-compilation flags (include paths, defines, sysroot)
-    // from CPython's CPPFLAGS. These are needed so bindgen's clang can
-    // find system headers (e.g. assert.h) when cross-compiling for
-    // Android NDK, WASI, etc.
-    if let Ok(cppflags) = env::var("PY_CPPFLAGS") {
-        if let Some(flags) = shlex::split(&cppflags) {
-            for flag in &flags {
-                if flag.starts_with("-I")
-                    || flag.starts_with("-D")
-                    || flag.starts_with("--sysroot")
-                    || flag.starts_with("-isysroot")
-                    || flag.starts_with("-isystem")
-                {
-                    builder = builder.clang_arg(flag);
+    // Extract cross-compilation flags from the C compiler command (PY_CC)
+    // and preprocessor flags (PY_CPPFLAGS). These provide the sysroot and
+    // include paths that bindgen's clang needs to find system headers when
+    // cross-compiling.
+    //
+    // - WASI: the sysroot is embedded in CC ("clang --sysroot=...")
+    // - iOS: -isysroot in CPPFLAGS points to the SDK
+    let mut have_sysroot = false;
+    for env_name in ["PY_CC", "PY_CPPFLAGS"] {
+        if let Ok(value) = env::var(env_name) {
+            if let Some(flags) = shlex::split(&value) {
+                let mut iter = flags.iter().peekable();
+                while let Some(flag) = iter.next() {
+                    if flag.starts_with("--sysroot")
+                        || flag.starts_with("-isysroot")
+                    {
+                        builder = builder.clang_arg(flag);
+                        have_sysroot = true;
+                        // Handle "-isysroot <path>" (space-separated)
+                        if flag == "-isysroot" || flag == "--sysroot" {
+                            if let Some(path) = iter.next() {
+                                builder = builder.clang_arg(path);
+                            }
+                        }
+                    } else if flag.starts_with("-I")
+                        || flag.starts_with("-D")
+                        || flag.starts_with("-isystem")
+                    {
+                        builder = builder.clang_arg(flag);
+                    }
+                }
+            }
+        }
+    }
+
+    // Android NDK: the cross-compiler binary knows its own sysroot
+    // implicitly, but bindgen's libclang does not. The NDK sysroot is
+    // at .../toolchains/llvm/prebuilt/<host>/sysroot, which is a sibling
+    // of the bin/ directory containing the compiler.
+    if !have_sysroot && target.contains("android") {
+        if let Ok(cc) = env::var("PY_CC") {
+            if let Some(parts) = shlex::split(&cc) {
+                if let Some(binary) = parts.first() {
+                    let cc_path = Path::new(binary);
+                    if let Some(bin_dir) = cc_path.parent() {
+                        let sysroot = bin_dir.with_file_name("sysroot");
+                        if sysroot.is_dir() {
+                            builder = builder.clang_arg(format!(
+                                "--sysroot={}",
+                                sysroot.display()
+                            ));
+                        }
+                    }
                 }
             }
         }

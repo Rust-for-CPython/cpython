@@ -1156,6 +1156,12 @@ if $CPP $CPPFLAGS $srcdir/Misc/platform_triplet.c >conftest.out 2>/dev/null; the
   PLATFORM_TRIPLET="${PLATFORM_TRIPLET@%:@PLATFORM_TRIPLET=}"
   RUST_TARGET=`grep '^RUST_TARGET=' conftest.out | tr -d ' 	'`
   RUST_TARGET="${RUST_TARGET@%:@RUST_TARGET=}"
+  dnl LLVM_TARGET is only emitted when it differs from RUST_TARGET
+  LLVM_TARGET=`grep '^LLVM_TARGET=' conftest.out | tr -d ' 	'`
+  LLVM_TARGET="${LLVM_TARGET@%:@LLVM_TARGET=}"
+  if test -z "$LLVM_TARGET"; then
+    LLVM_TARGET="$RUST_TARGET"
+  fi
   AC_MSG_RESULT([$PLATFORM_TRIPLET])
 else
   AC_MSG_RESULT([none])
@@ -4372,6 +4378,7 @@ AC_SUBST([CARGO_PROFILE])
 AC_SUBST([CARGO_TARGET])
 AC_SUBST([CARGO_TARGET_LINKER_ENV])
 AC_SUBST([CARGO_DYLIB_SUFFIX])
+AC_SUBST([LLVM_TARGET])
 
 
 dnl detect sqlite3 from Emscripten emport

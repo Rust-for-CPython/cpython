@@ -64,6 +64,7 @@ CARGO_PROFILE=@CARGO_PROFILE@
 CARGO_TARGET=@CARGO_TARGET@
 CARGO_TARGET_LINKER_ENV=@CARGO_TARGET_LINKER_ENV@
 CARGO_DYLIB_SUFFIX=@CARGO_DYLIB_SUFFIX@
+LLVM_TARGET=@LLVM_TARGET@
 RUST_STATICLIB_DEP=@RUST_STATICLIB_DEP@
 
 GNULD=		@GNULD@
@@ -3378,7 +3379,7 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
 # Module dependencies and platform-specific files
 
 cpython-sys: Modules/cpython-sys/Cargo.toml Modules/cpython-sys/build.rs Modules/cpython-sys/wrapper.h Modules/cpython-sys/parser.h
-	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) PY_CPPFLAGS="$(CPPFLAGS)" $(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
+	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) PY_CC="$(CC)" PY_CPPFLAGS="$(CPPFLAGS)" LLVM_TARGET="$(LLVM_TARGET)" $(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
 
 RUST_STATICLIB_A= target/$(if $(CARGO_TARGET),$(CARGO_TARGET)/$(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR))/libcpython_rust_staticlib.a
 
