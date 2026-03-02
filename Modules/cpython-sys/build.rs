@@ -12,11 +12,8 @@ fn main() {
     if gil_disabled(srcdir, builddir.as_deref()) {
         println!("cargo:rustc-cfg=py_gil_disabled");
     }
+    println!("cargo::rustc-check-cfg=cfg(py_gil_disabled)");
     generate_c_api_bindings(srcdir, builddir.as_deref(), out_path.as_path());
-    // TODO(emmatyping): generate bindings to the internal parser API
-    // The parser includes things slightly differently, so we should generate
-    // it's bindings independently
-    //generate_parser_bindings(srcdir, &out_path.as_path());
 }
 
 fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
@@ -38,6 +35,36 @@ fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
 
 fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Path) {
     let mut builder = bindgen::Builder::default().header("wrapper.h");
+
+    // Suppress all clang warnings (deprecation warnings, etc.)
+    builder = builder.clang_arg("-w");
+
+    // Tell clang the correct target triple for cross-compilation.
+    // Without this, bindgen uses the host target which causes errors like
+    // "thread-local storage is not supported" on iOS or missing headers
+    // on Android/WASI.
+    if let Ok(target) = env::var("TARGET") {
+        builder = builder.clang_arg(format!("--target={}", target));
+    }
+
+    // Forward cross-compilation flags (include paths, defines, sysroot)
+    // from CPython's CPPFLAGS. These are needed so bindgen's clang can
+    // find system headers (e.g. assert.h) when cross-compiling for
+    // Android NDK, WASI, etc.
+    if let Ok(cppflags) = env::var("PY_CPPFLAGS") {
+        if let Some(flags) = shlex::split(&cppflags) {
+            for flag in &flags {
+                if flag.starts_with("-I")
+                    || flag.starts_with("-D")
+                    || flag.starts_with("--sysroot")
+                    || flag.starts_with("-isysroot")
+                    || flag.starts_with("-isystem")
+                {
+                    builder = builder.clang_arg(flag);
+                }
+            }
+        }
+    }
 
     // Always search the source dir and the public headers.
     let mut include_dirs = vec![srcdir.to_path_buf(), srcdir.join("Include")];
