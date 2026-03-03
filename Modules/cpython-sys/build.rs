@@ -76,6 +76,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
                     }
                 } else if flag.starts_with("-I")
                     || flag.starts_with("-D")
+                    || flag.starts_with("-std=")
                     || flag.starts_with("-isystem")
                 {
                     builder = builder.clang_arg(flag);
