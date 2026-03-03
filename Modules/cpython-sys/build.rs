@@ -60,27 +60,25 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // - iOS: -isysroot in CPPFLAGS
     let mut have_sysroot = false;
     for env_name in ["PY_CC", "PY_CPPFLAGS", "PY_CFLAGS"] {
-        if let Ok(value) = env::var(env_name) {
-            if let Some(flags) = shlex::split(&value) {
-                let mut iter = flags.iter().peekable();
-                while let Some(flag) = iter.next() {
-                    if flag.starts_with("--sysroot")
-                        || flag.starts_with("-isysroot")
+        if let Ok(value) = env::var(env_name)
+            && let Some(flags) = shlex::split(&value)
+        {
+            let mut iter = flags.iter().peekable();
+            while let Some(flag) = iter.next() {
+                if flag.starts_with("--sysroot") || flag.starts_with("-isysroot") {
+                    builder = builder.clang_arg(flag);
+                    have_sysroot = true;
+                    // Handle "-isysroot <path>" (space-separated)
+                    if (flag == "-isysroot" || flag == "--sysroot")
+                        && let Some(path) = iter.next()
                     {
-                        builder = builder.clang_arg(flag);
-                        have_sysroot = true;
-                        // Handle "-isysroot <path>" (space-separated)
-                        if flag == "-isysroot" || flag == "--sysroot" {
-                            if let Some(path) = iter.next() {
-                                builder = builder.clang_arg(path);
-                            }
-                        }
-                    } else if flag.starts_with("-I")
-                        || flag.starts_with("-D")
-                        || flag.starts_with("-isystem")
-                    {
-                        builder = builder.clang_arg(flag);
+                        builder = builder.clang_arg(path);
                     }
+                } else if flag.starts_with("-I")
+                    || flag.starts_with("-D")
+                    || flag.starts_with("-isystem")
+                {
+                    builder = builder.clang_arg(flag);
                 }
             }
         }
@@ -88,18 +86,14 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
 
     // WASI SDK: WASI_SDK_PATH is set by Tools/wasm/wasi/__main__.py.
     // The sysroot is at $WASI_SDK_PATH/share/wasi-sysroot.
-    if !have_sysroot && target.contains("wasi") {
-        if let Ok(sdk_path) = env::var("WASI_SDK_PATH") {
-            let sysroot = PathBuf::from(&sdk_path)
-                .join("share")
-                .join("wasi-sysroot");
-            if sysroot.is_dir() {
-                builder = builder.clang_arg(format!(
-                    "--sysroot={}",
-                    sysroot.display()
-                ));
-                have_sysroot = true;
-            }
+    if !have_sysroot
+        && target.contains("wasi")
+        && let Ok(sdk_path) = env::var("WASI_SDK_PATH")
+    {
+        let sysroot = PathBuf::from(&sdk_path).join("share").join("wasi-sysroot");
+        if sysroot.is_dir() {
+            builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
+            have_sysroot = true;
         }
     }
 
@@ -108,21 +102,16 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     //   $ANDROID_HOME/ndk/<ver>/toolchains/llvm/prebuilt/<host>/bin/<triple>-clang
     // The sysroot is a sibling of bin/:
     //   .../toolchains/llvm/prebuilt/<host>/sysroot
-    if !have_sysroot && target.contains("android") {
-        if let Ok(cc) = env::var("PY_CC") {
-            if let Some(parts) = shlex::split(&cc) {
-                if let Some(binary) = parts.first() {
-                    if let Some(bin_dir) = Path::new(binary).parent() {
-                        let sysroot = bin_dir.with_file_name("sysroot");
-                        if sysroot.is_dir() {
-                            builder = builder.clang_arg(format!(
-                                "--sysroot={}",
-                                sysroot.display()
-                            ));
-                        }
-                    }
-                }
-            }
+    if !have_sysroot
+        && target.contains("android")
+        && let Ok(cc) = env::var("PY_CC")
+        && let Some(parts) = shlex::split(&cc)
+        && let Some(binary) = parts.first()
+        && let Some(bin_dir) = Path::new(binary).parent()
+    {
+        let sysroot = bin_dir.with_file_name("sysroot");
+        if sysroot.is_dir() {
+            builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
         }
     }
 

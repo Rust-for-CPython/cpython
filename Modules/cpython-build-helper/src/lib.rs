@@ -40,11 +40,11 @@ pub fn print_linker_args() {
     if let Ok(libpython) = env::var("LIBPYTHON") {
         let builddir = env::var("PYTHON_BUILD_DIR").ok();
         for arg in shlex::split(&libpython).expect("Invalid LIBPYTHON") {
-            if arg == "-L." {
-                if let Some(ref dir) = builddir {
-                    println!("cargo:rustc-cdylib-link-arg=-L{}", dir);
-                    continue;
-                }
+            if arg == "-L."
+                && let Some(ref dir) = builddir
+            {
+                println!("cargo:rustc-cdylib-link-arg=-L{}", dir);
+                continue;
             }
             println!("cargo:rustc-cdylib-link-arg={}", arg);
         }
