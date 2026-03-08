@@ -62,6 +62,10 @@ CARGO_HOME=@CARGO_HOME@
 CARGO_TARGET_DIR=@CARGO_TARGET_DIR@
 CARGO_PROFILE=@CARGO_PROFILE@
 CARGO_TARGET=@CARGO_TARGET@
+CARGO_TARGET_LINKER_ENV=@CARGO_TARGET_LINKER_ENV@
+CARGO_DYLIB_SUFFIX=@CARGO_DYLIB_SUFFIX@
+LLVM_TARGET=@LLVM_TARGET@
+RUST_STATICLIB_DEP=@RUST_STATICLIB_DEP@
 
 GNULD=		@GNULD@
 
@@ -184,7 +188,8 @@ CONFINCLUDEPY=	$(CONFINCLUDEDIR)/python$(LDVERSION)
 SHLIB_SUFFIX=	@SHLIB_SUFFIX@
 EXT_SUFFIX=	@EXT_SUFFIX@
 LDSHARED=	@LDSHARED@ $(PY_LDFLAGS)
-BLDSHARED=	@BLDSHARED@ $(PY_CORE_LDFLAGS)
+BLDSHARED_EXE= @BLDSHARED_EXE@
+BLDSHARED_ARGS=	@BLDSHARED_ARGS@ $(PY_CORE_LDFLAGS)
 LDCXXSHARED=	@LDCXXSHARED@ $(PY_LDFLAGS)
 DESTSHARED=	$(BINLIBDEST)/lib-dynload
 
@@ -975,7 +980,7 @@ clinic-tests: check-clean-src $(srcdir)/Lib/test/clinic.test.c
 	$(PYTHON_FOR_REGEN) $(srcdir)/Tools/clinic/clinic.py -f $(srcdir)/Lib/test/clinic.test.c
 
 # Build the interpreter
-$(BUILDPYTHON):	Programs/python.o $(LINK_PYTHON_DEPS)
+$(BUILDPYTHON):	Programs/python.o $(LINK_PYTHON_DEPS) $(RUST_STATICLIB_DEP)
 	$(LINKCC) $(PY_CORE_EXE_LDFLAGS) $(LINKFORSHARED) -o $@ Programs/python.o $(LINK_PYTHON_OBJS) $(LIBS) $(MODLIBS) $(SYSLIBS)
 
 platform: $(PYTHON_FOR_BUILD_DEPS) pybuilddir.txt
@@ -1008,16 +1013,16 @@ $(LIBRARY): $(LIBRARY_OBJS)
 libpython$(LDVERSION).so: $(LIBRARY_OBJS) $(DTRACE_OBJS)
 	# AIX Linker don't support "-h" option
 	if test "$(MACHDEP)" != "aix"; then \
-		$(BLDSHARED) -Wl,-h$(INSTSONAME) -o $(INSTSONAME) $(LIBRARY_OBJS) $(MODLIBS) $(SHLIBS) $(LIBC) $(LIBM); \
+		$(BLDSHARED_EXE) $(BLDSHARED_ARGS) -Wl,-h$(INSTSONAME) -o $(INSTSONAME) $(LIBRARY_OBJS) $(MODLIBS) $(SHLIBS) $(LIBC) $(LIBM); \
 	else \
-		$(BLDSHARED) -o $@ $(LIBRARY_OBJS) $(MODLIBS) $(SHLIBS) $(LIBC) $(LIBM); \
+		$(BLDSHARED_EXE) $(BLDSHARED_ARGS) -o $@ $(LIBRARY_OBJS) $(MODLIBS) $(SHLIBS) $(LIBC) $(LIBM); \
 	fi
 	if test $(INSTSONAME) != $@; then \
 		$(LN) -f $(INSTSONAME) $@; \
 	fi
 
 libpython3.so:	libpython$(LDVERSION).so
-	$(BLDSHARED) $(NO_AS_NEEDED) -o $@ -Wl,-h$@ $^
+	$(BLDSHARED_EXE) $(BLDSHARED_ARGS) $(NO_AS_NEEDED) -o $@ -Wl,-h$@ $^
 
 libpython$(LDVERSION).dylib: $(LIBRARY_OBJS)
 	 $(CC) -dynamiclib $(PY_CORE_LDFLAGS) -undefined dynamic_lookup -Wl,-install_name,$(prefix)/lib/libpython$(LDVERSION).dylib -Wl,-compatibility_version,$(VERSION) -Wl,-current_version,$(VERSION) -o $@ $(LIBRARY_OBJS) $(DTRACE_OBJS) $(SHLIBS) $(LIBC) $(LIBM); \
@@ -3437,7 +3442,12 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
 # Module dependencies and platform-specific files
 
 cpython-sys: Modules/cpython-sys/Cargo.toml Modules/cpython-sys/build.rs Modules/cpython-sys/wrapper.h Modules/cpython-sys/parser.h
-	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) \$(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
+	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) PY_CC="$(CC)" PY_CPPFLAGS="$(CPPFLAGS)" PY_CFLAGS="$(CFLAGS)" LLVM_TARGET="$(LLVM_TARGET)" $(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-sys --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
+
+RUST_STATICLIB_A= target/$(if $(CARGO_TARGET),$(CARGO_TARGET)/$(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR))/libcpython_rust_staticlib.a
+
+cpython-rust-staticlib: cpython-sys
+	CARGO_TARGET_DIR=$(abs_builddir)/target PYTHON_BUILD_DIR=$(abs_builddir) $(CARGO_HOME)/bin/cargo build --lib --locked --package cpython-rust-staticlib --profile $(CARGO_PROFILE) $(if $(CARGO_TARGET),--target=$(CARGO_TARGET)) --manifest-path $(srcdir)/Cargo.toml
 
 # force rebuild when header file or module build flavor (static/shared) is changed
 MODULE_DEPS_STATIC=Modules/config.c

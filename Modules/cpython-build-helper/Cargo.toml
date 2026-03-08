@@ -1,10 +1,7 @@
 [package]
-name = "cpython-sys"
+name = "cpython-build-helper"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-
-[build-dependencies]
-bindgen = "0.72.1"
 shlex = "1.3"

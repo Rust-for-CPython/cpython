@@ -6,6 +6,7 @@ version = 4
 name = "_base64"
 version = "0.1.0"
 dependencies = [
+ "cpython-build-helper",
  "cpython-sys",
 ]
 
@@ -71,10 +72,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpython-build-helper"
+version = "0.1.0"
+dependencies = [
+ "shlex",
+]
+
+[[package]]
+name = "cpython-rust-staticlib"
+version = "0.1.0"
+dependencies = [
+ "_base64",
+]
+
+[[package]]
 name = "cpython-sys"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "shlex",
 ]
 
 [[package]]

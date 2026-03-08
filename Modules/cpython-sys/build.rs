@@ -12,11 +12,8 @@ fn main() {
     if gil_disabled(srcdir, builddir.as_deref()) {
         println!("cargo:rustc-cfg=py_gil_disabled");
     }
+    println!("cargo::rustc-check-cfg=cfg(py_gil_disabled)");
     generate_c_api_bindings(srcdir, builddir.as_deref(), out_path.as_path());
-    // TODO(emmatyping): generate bindings to the internal parser API
-    // The parser includes things slightly differently, so we should generate
-    // it's bindings independently
-    //generate_parser_bindings(srcdir, &out_path.as_path());
 }
 
 fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
@@ -39,13 +36,95 @@ fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
 fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Path) {
     let mut builder = bindgen::Builder::default().header("wrapper.h");
 
-    // Always search the source dir and the public headers.
-    let mut include_dirs = vec![srcdir.to_path_buf(), srcdir.join("Include")];
-    // Include the build directory if provided; out-of-tree builds place
-    // the generated pyconfig.h there.
+    // Suppress all clang warnings (deprecation warnings, etc.)
+    builder = builder.clang_arg("-w");
+
+    // Tell clang the correct target triple for cross-compilation.
+    // LLVM_TARGET is the clang/LLVM triple which may differ from the Rust
+    // target (e.g. arm64-apple-macosx vs aarch64-apple-darwin, or
+    // riscv64-unknown-linux-gnu vs riscv64gc-unknown-linux-gnu).
+    // Falls back to Cargo's TARGET if LLVM_TARGET is not set.
+    let target = env::var("LLVM_TARGET")
+        .or_else(|_| env::var("TARGET"))
+        .unwrap_or_default();
+    if !target.is_empty() {
+        builder = builder.clang_arg(format!("--target={}", target));
+    }
+
+    // Extract cross-compilation flags from the C compiler command (PY_CC),
+    // preprocessor flags (PY_CPPFLAGS), and compiler flags (PY_CFLAGS).
+    // These provide the sysroot, include paths, and defines that bindgen's
+    // clang needs when cross-compiling.
+    //
+    // - WASI: sysroot in CC, -D_WASI_EMULATED_SIGNAL in CFLAGS
+    // - iOS: -isysroot in CPPFLAGS
+    let mut have_sysroot = false;
+    for env_name in ["PY_CC", "PY_CPPFLAGS", "PY_CFLAGS"] {
+        if let Ok(value) = env::var(env_name)
+            && let Some(flags) = shlex::split(&value)
+        {
+            let mut iter = flags.iter().peekable();
+            while let Some(flag) = iter.next() {
+                if flag.starts_with("--sysroot") || flag.starts_with("-isysroot") {
+                    builder = builder.clang_arg(flag);
+                    have_sysroot = true;
+                    // Handle "-isysroot <path>" (space-separated)
+                    if (flag == "-isysroot" || flag == "--sysroot")
+                        && let Some(path) = iter.next()
+                    {
+                        builder = builder.clang_arg(path);
+                    }
+                } else if flag.starts_with("-I")
+                    || flag.starts_with("-D")
+                    || flag.starts_with("-std=")
+                    || flag.starts_with("-isystem")
+                {
+                    builder = builder.clang_arg(flag);
+                }
+            }
+        }
+    }
+
+    // WASI SDK: WASI_SDK_PATH is set by Tools/wasm/wasi/__main__.py.
+    // The sysroot is at $WASI_SDK_PATH/share/wasi-sysroot.
+    if !have_sysroot
+        && target.contains("wasi")
+        && let Ok(sdk_path) = env::var("WASI_SDK_PATH")
+    {
+        let sysroot = PathBuf::from(&sdk_path).join("share").join("wasi-sysroot");
+        if sysroot.is_dir() {
+            builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
+            have_sysroot = true;
+        }
+    }
+
+    // Android NDK: ANDROID_HOME is set by the CI/user environment, and
+    // Android/android-env.sh sets CC to the NDK clang binary at:
+    //   $ANDROID_HOME/ndk/<ver>/toolchains/llvm/prebuilt/<host>/bin/<triple>-clang
+    // The sysroot is a sibling of bin/:
+    //   .../toolchains/llvm/prebuilt/<host>/sysroot
+    if !have_sysroot
+        && target.contains("android")
+        && let Ok(cc) = env::var("PY_CC")
+        && let Some(parts) = shlex::split(&cc)
+        && let Some(binary) = parts.first()
+        && let Some(bin_dir) = Path::new(binary).parent()
+    {
+        let sysroot = bin_dir.with_file_name("sysroot");
+        if sysroot.is_dir() {
+            builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
+        }
+    }
+
+    // Include the build directory first so that cross-build pyconfig.h
+    // takes precedence over any pyconfig.h in the source tree (which may
+    // be from a native build with different settings like LONG_BIT).
+    let mut include_dirs = Vec::new();
     if let Some(build) = builddir {
         include_dirs.push(PathBuf::from(build));
     }
+    include_dirs.push(srcdir.to_path_buf());
+    include_dirs.push(srcdir.join("Include"));
 
     for dir in include_dirs {
         builder = builder.clang_arg(format!("-I{}", dir.display()));

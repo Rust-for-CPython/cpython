@@ -22,6 +22,10 @@ IGNORE = {
     '__pycache__',
     'site-packages',
 
+    # Rust build-system support modules
+    'cpython-build-helper',
+    'cpython-rust-staticlib',
+
     # Test modules and packages
     '__hello__',
     '__phello__',
