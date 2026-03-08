@@ -1,0 +1,11 @@
+[package]
+name = "cpython-rust-staticlib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+_base64 ={ path = "../_base64" }
+
+[lib]
+name = "cpython_rust_staticlib"
+crate-type = ["staticlib"]
