@@ -307,7 +307,7 @@ sed -e 's/[ 	]*#.*//' -e '/^[ 	]*$/d' |
 					BUILT_SHARED="$BUILT_SHARED $mod"
 					# depends on the headers through cpython-sys
 					rule="$rust_shared: cpython-sys \$(srcdir)/Cargo.toml \$(srcdir)/Cargo.lock \$(srcdir)/$srcdir/$manifest $prefixed_srcs \$(PYTHON_HEADERS) \$(MODULE_${mods_upper}_LDEPS) \$(LIBRARY)"
-					rule="$rule; CARGO_TARGET_DIR=\$(abs_builddir)/target PYTHON_BUILD_DIR=\$(abs_builddir) PY_CC=\"\$(CC)\" RUST_SHARED_BUILD=\$(PY_ENABLE_SHARED) IPHONEOS_DEPLOYMENT_TARGET=\$(IPHONEOS_DEPLOYMENT_TARGET) BLDSHARED_EXE=\"\$(BLDSHARED_EXE)\" BLDSHARED_ARGS=\"\$(BLDSHARED_ARGS)\" LIBPYTHON=\"\$(LIBPYTHON)\" \$(if \$(CARGO_TARGET_LINKER_ENV),\$(CARGO_TARGET_LINKER_ENV)=\$(CC)) \$(CARGO_HOME)/bin/cargo build -vvv --lib --locked --package ${mod} --profile \$(CARGO_PROFILE) \$(if \$(CARGO_TARGET),--target=\$(CARGO_TARGET)) --manifest-path \$(srcdir)/Cargo.toml"
+					rule="$rule; CARGO_TARGET_DIR=\$(abs_builddir)/target PYTHON_BUILD_DIR=\$(abs_builddir) PY_CC=\"\$(CC)\" PY_CPPFLAGS=\"\$(CPPFLAGS)\" PY_CFLAGS=\"\$(CFLAGS)\" LLVM_TARGET=\"\$(LLVM_TARGET)\" RUST_SHARED_BUILD=\$(PY_ENABLE_SHARED) IPHONEOS_DEPLOYMENT_TARGET=\$(IPHONEOS_DEPLOYMENT_TARGET) BLDSHARED_EXE=\"\$(BLDSHARED_EXE)\" BLDSHARED_ARGS=\"\$(BLDSHARED_ARGS)\" LIBPYTHON=\"\$(LIBPYTHON)\" \$(if \$(CARGO_TARGET_LINKER_ENV),\$(CARGO_TARGET_LINKER_ENV)=\$(CC)) \$(CARGO_HOME)/bin/cargo build -vvv --lib --locked --package ${mod} --profile \$(CARGO_PROFILE) \$(if \$(CARGO_TARGET),--target=\$(CARGO_TARGET)) --manifest-path \$(srcdir)/Cargo.toml"
 					echo "$rule" >>$rulesf
 					echo "$file: $rust_shared; mv $rust_shared $file" >>$rulesf
 				done
