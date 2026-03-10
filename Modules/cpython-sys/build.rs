@@ -63,16 +63,13 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // Suppress all clang warnings (deprecation warnings, etc.)
     builder = builder.clang_arg("-w");
 
-    // Tell clang the correct target triple for cross-compilation.
-    // LLVM_TARGET is the clang/LLVM triple which may differ from the Rust
-    // target (e.g. arm64-apple-macosx vs aarch64-apple-darwin, or
-    // riscv64-unknown-linux-gnu vs riscv64gc-unknown-linux-gnu).
-    // Falls back to Cargo's TARGET if LLVM_TARGET is not set.
-    let target = env::var("LLVM_TARGET")
-        .or_else(|_| env::var("TARGET"))
-        .unwrap_or_default();
-    if !target.is_empty() {
-        builder = builder.clang_arg(format!("--target={}", target));
+    // Tell clang the correct target triple for cross-compilation when we have
+    // an LLVM-specific triple. Otherwise let bindgen translate Cargo's TARGET
+    // itself (e.g. aarch64-apple-ios-sim -> arm64-apple-ios-simulator).
+    let cargo_target = env::var("TARGET").unwrap_or_default();
+    let llvm_target = env::var("LLVM_TARGET").unwrap_or_default();
+    if !llvm_target.is_empty() && llvm_target != cargo_target {
+        builder = builder.clang_arg(format!("--target={llvm_target}"));
     }
 
     // Extract cross-compilation flags from the C compiler command (PY_CC),
@@ -112,7 +109,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // WASI SDK: WASI_SDK_PATH is set by Tools/wasm/wasi/__main__.py.
     // The sysroot is at $WASI_SDK_PATH/share/wasi-sysroot.
     if !have_sysroot
-        && target.contains("wasi")
+        && cargo_target.contains("wasi")
         && let Ok(sdk_path) = env::var("WASI_SDK_PATH")
     {
         let sysroot = PathBuf::from(&sdk_path).join("share").join("wasi-sysroot");
@@ -128,7 +125,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // The sysroot is a sibling of bin/:
     //   .../toolchains/llvm/prebuilt/<host>/sysroot
     if !have_sysroot
-        && target.contains("android")
+        && cargo_target.contains("android")
         && let Ok(cc) = env::var("PY_CC")
         && let Some(parts) = shlex::split(&cc)
         && let Some(binary) = parts.first()
