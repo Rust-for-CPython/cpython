@@ -27,9 +27,7 @@ pub fn print_linker_args() {
     // Apple framework builds for iOS encode framework search/link flags in
     // BLDSHARED_EXE. Skip the linker executable itself and filter out flags
     // that conflict with Cargo's own cdylib invocation.
-    if shared_build
-        && let Ok(args) = env::var("BLDSHARED_EXE")
-    {
+    if shared_build && let Ok(args) = env::var("BLDSHARED_EXE") {
         print_link_args(&args, true);
     }
 
