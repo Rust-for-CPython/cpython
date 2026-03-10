@@ -129,6 +129,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     for dir in include_dirs {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
+    builder = add_target_clang_args(builder, builddir);
 
     let bindings = builder
         .allowlist_function("_?Py.*")
@@ -144,4 +145,38 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     bindings
         .write_to_file(out_path.join("c_api.rs"))
         .expect("Couldn't write bindings!");
+}
+
+fn add_target_clang_args(mut builder: bindgen::Builder, builddir: Option<&str>) -> bindgen::Builder {
+    let target = env::var("TARGET").unwrap_or_default();
+    if !target.contains("apple-ios") {
+        return builder;
+    }
+
+    // For iOS targets, bindgen may parse headers with an iOS simulator/device
+    // target but without a deployment minimum, which disables TLS support.
+    let deployment_target = ios_deployment_target(builddir).unwrap_or_else(|| "13.0".to_string());
+    builder = builder.clang_arg(format!("-mios-version-min={deployment_target}"));
+    builder
+}
+
+fn ios_deployment_target(builddir: Option<&str>) -> Option<String> {
+    if let Ok(value) = env::var("IPHONEOS_DEPLOYMENT_TARGET")
+        && !value.is_empty()
+    {
+        return Some(value);
+    }
+
+    let builddir = builddir?;
+    let makefile = Path::new(builddir).join("Makefile");
+    let text = std::fs::read_to_string(makefile).ok()?;
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("IPHONEOS_DEPLOYMENT_TARGET=") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
 }
