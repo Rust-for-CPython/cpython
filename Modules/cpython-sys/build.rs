@@ -9,11 +9,35 @@ fn main() {
         .expect("expected Modules/cpython-sys to live under the source tree");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let builddir = env::var("PYTHON_BUILD_DIR").ok();
+    emit_rerun_instructions(builddir.as_deref());
     if gil_disabled(srcdir, builddir.as_deref()) {
         println!("cargo:rustc-cfg=py_gil_disabled");
     }
     println!("cargo::rustc-check-cfg=cfg(py_gil_disabled)");
     generate_c_api_bindings(srcdir, builddir.as_deref(), out_path.as_path());
+}
+
+// Bindgen depends on build-time env and, on iOS, can also inherit the
+// deployment target from the generated Makefile. Declare both so Cargo reruns
+// the build script when those inputs change.
+fn emit_rerun_instructions(builddir: Option<&str>) {
+    for var in [
+        "IPHONEOS_DEPLOYMENT_TARGET",
+        "LLVM_TARGET",
+        "PYTHON_BUILD_DIR",
+        "PY_CC",
+        "PY_CPPFLAGS",
+        "PY_CFLAGS",
+        "TARGET",
+        "WASI_SDK_PATH",
+    ] {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
+
+    if let Some(builddir) = builddir {
+        let makefile = Path::new(builddir).join("Makefile");
+        println!("cargo:rerun-if-changed={}", makefile.display());
+    }
 }
 
 fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {

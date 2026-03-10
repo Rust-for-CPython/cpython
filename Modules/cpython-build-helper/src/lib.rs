@@ -7,6 +7,7 @@ pub fn print_linker_args() {
     println!("cargo:rerun-if-env-changed=BLDSHARED_EXE");
     println!("cargo:rerun-if-env-changed=BLDSHARED_ARGS");
     println!("cargo:rerun-if-env-changed=LIBPYTHON");
+    println!("cargo:rerun-if-env-changed=PY_CC");
     println!("cargo:rerun-if-env-changed=PYTHON_BUILD_DIR");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
 
@@ -60,8 +61,8 @@ pub fn print_linker_args() {
 
 fn print_link_args(raw: &str, skip_first: bool) {
     let mut args = shlex::split(raw).expect("Invalid linker args");
-    if skip_first && !args.is_empty() {
-        args.remove(0);
+    if skip_first {
+        args = strip_linker_executable(args, env::var("PY_CC").ok().as_deref());
     }
 
     let build_dir = env::var("PYTHON_BUILD_DIR").ok();
@@ -97,4 +98,27 @@ fn print_link_args(raw: &str, skip_first: bool) {
             }
         }
     }
+}
+
+// BLDSHARED_EXE may start with a wrapper/compiler command such as
+// "xcrun --sdk iphoneos clang" or "ccache clang". Strip that prefix so only
+// linker flags are forwarded to rustc.
+fn strip_linker_executable(args: Vec<String>, compiler: Option<&str>) -> Vec<String> {
+    if let Some(compiler) = compiler
+        && let Some(prefix) = compiler_command_prefix(compiler)
+        && args.as_slice().starts_with(prefix.as_slice())
+    {
+        return args[prefix.len()..].to_vec();
+    }
+
+    if args.is_empty() {
+        return args;
+    }
+    args[1..].to_vec()
+}
+
+fn compiler_command_prefix(raw: &str) -> Option<Vec<String>> {
+    let tokens = shlex::split(raw)?;
+    let last_non_flag = tokens.iter().rposition(|token| !token.starts_with('-'))?;
+    Some(tokens.into_iter().take(last_non_flag + 1).collect())
 }
