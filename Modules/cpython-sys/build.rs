@@ -147,7 +147,10 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
         .expect("Couldn't write bindings!");
 }
 
-fn add_target_clang_args(mut builder: bindgen::Builder, builddir: Option<&str>) -> bindgen::Builder {
+fn add_target_clang_args(
+    mut builder: bindgen::Builder,
+    builddir: Option<&str>,
+) -> bindgen::Builder {
     let target = env::var("TARGET").unwrap_or_default();
     if !target.contains("apple-ios") {
         return builder;
