@@ -97,6 +97,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
                     }
                 } else if flag.starts_with("-I")
                     || flag.starts_with("-D")
+                    || flag.starts_with("-std=")
                     || flag.starts_with("-isystem")
                 {
                     builder = builder.clang_arg(flag);
@@ -150,11 +151,6 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
     builder = add_target_clang_args(builder, builddir);
-
-    // Use C11 with GNU extensions so that <stdatomic.h> is available,
-    // required by the mimalloc headers. This must be the last clang arg
-    // to ensure it is not overridden by any earlier -std= flag.
-    builder = builder.clang_arg("-std=gnu11");
 
     let bindings = builder
         .allowlist_function("_?Py.*")

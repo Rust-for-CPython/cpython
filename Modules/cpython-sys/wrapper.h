@@ -32,6 +32,11 @@
 #define Py_BUILD_CORE
 
 // Internal
+// Ensure C11 atomics are available for mimalloc headers.
+// Clang supports <stdatomic.h> in all C modes via __has_extension(c_atomic).
+#if !defined(__cplusplus)
+#include <stdatomic.h>
+#endif
 #include "internal/pycore_parser.h"
 #include "internal/pycore_mimalloc.h"
 #include "internal/mimalloc/mimalloc.h"
