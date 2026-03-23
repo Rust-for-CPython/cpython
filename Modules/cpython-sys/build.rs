@@ -63,10 +63,6 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // Suppress all clang warnings (deprecation warnings, etc.)
     builder = builder.clang_arg("-w");
 
-    // Use C11 with GNU extensions so that <stdatomic.h> is available,
-    // required by the mimalloc headers.
-    builder = builder.clang_arg("-std=gnu11");
-
     // Tell clang the correct target triple for cross-compilation when we have
     // an LLVM-specific triple. Otherwise let bindgen translate Cargo's TARGET
     // itself (e.g. aarch64-apple-ios-sim -> arm64-apple-ios-simulator).
@@ -154,6 +150,11 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
     builder = add_target_clang_args(builder, builddir);
+
+    // Use C11 with GNU extensions so that <stdatomic.h> is available,
+    // required by the mimalloc headers. This must be the last clang arg
+    // to ensure it is not overridden by any earlier -std= flag.
+    builder = builder.clang_arg("-std=gnu11");
 
     let bindings = builder
         .allowlist_function("_?Py.*")
