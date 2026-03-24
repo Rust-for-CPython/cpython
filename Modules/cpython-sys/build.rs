@@ -10,6 +10,7 @@ fn main() {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let builddir = env::var("PYTHON_BUILD_DIR").ok();
     emit_rerun_instructions(builddir.as_deref());
+    prefer_newest_libclang();
     if gil_disabled(srcdir, builddir.as_deref()) {
         println!("cargo:rustc-cfg=py_gil_disabled");
     }
@@ -37,6 +38,39 @@ fn emit_rerun_instructions(builddir: Option<&str>) {
     if let Some(builddir) = builddir {
         let makefile = Path::new(builddir).join("Makefile");
         println!("cargo:rerun-if-changed={}", makefile.display());
+    }
+}
+
+/// When LIBCLANG_PATH is not already set, scan /usr/lib/llvm-*/lib for the
+/// newest available libclang and point bindgen at it.  Ubuntu 24.04 ships
+/// libclang-18 by default, which has broken headers (stdatomic.h, mmintrin.h).
+/// CI jobs that install a newer LLVM (e.g. clang-20) also get a working
+/// libclang in /usr/lib/llvm-20/lib -- we just need to tell bindgen about it.
+fn prefer_newest_libclang() {
+    if env::var_os("LIBCLANG_PATH").is_some() {
+        return;
+    }
+    let base = Path::new("/usr/lib");
+    let mut best: Option<(u32, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(base) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if let Some(ver_str) = name.strip_prefix("llvm-") {
+                if let Ok(ver) = ver_str.parse::<u32>() {
+                    let lib_dir = entry.path().join("lib");
+                    if lib_dir.is_dir() {
+                        if best.as_ref().map_or(true, |(v, _)| ver > *v) {
+                            best = Some((ver, lib_dir));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some((ver, lib_dir)) = best {
+        eprintln!("cpython-sys: using libclang from llvm-{ver}");
+        env::set_var("LIBCLANG_PATH", &lib_dir);
     }
 }
 
@@ -150,14 +184,6 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     for dir in include_dirs {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
-
-    // Provide a fallback <stdatomic.h> for libclang versions that ship a
-    // broken one (e.g. libclang-18 on Ubuntu 24.04).  Using -isystem places
-    // it after -I paths but before the default system headers, so it only
-    // takes effect when the real <stdatomic.h> is unusable.
-    let fallback_dir =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("bindgen-fallback");
-    builder = builder.clang_arg(format!("-isystem{}", fallback_dir.display()));
 
     builder = add_target_clang_args(builder, builddir);
 
