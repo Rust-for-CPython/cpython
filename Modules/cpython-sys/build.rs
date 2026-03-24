@@ -155,7 +155,8 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // broken one (e.g. libclang-18 on Ubuntu 24.04).  Using -isystem places
     // it after -I paths but before the default system headers, so it only
     // takes effect when the real <stdatomic.h> is unusable.
-    let fallback_dir = manifest_dir.join("bindgen-fallback");
+    let fallback_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("bindgen-fallback");
     builder = builder.clang_arg(format!("-isystem{}", fallback_dir.display()));
 
     builder = add_target_clang_args(builder, builddir);
