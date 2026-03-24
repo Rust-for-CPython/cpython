@@ -52,8 +52,6 @@ jobs:
         else
           sudo ./llvm.sh 20
         fi
-      env:
-        SANITIZER: ${{ inputs.sanitizer }}
 
     - name: Sanitizer option setup
       run: |
