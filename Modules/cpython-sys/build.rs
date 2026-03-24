@@ -10,7 +10,6 @@ fn main() {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let builddir = env::var("PYTHON_BUILD_DIR").ok();
     emit_rerun_instructions(builddir.as_deref());
-    prefer_newest_libclang();
     if gil_disabled(srcdir, builddir.as_deref()) {
         println!("cargo:rustc-cfg=py_gil_disabled");
     }
@@ -41,38 +40,32 @@ fn emit_rerun_instructions(builddir: Option<&str>) {
     }
 }
 
-/// When LIBCLANG_PATH is not already set, scan /usr/lib/llvm-*/lib for the
-/// newest available libclang and point bindgen at it.  Ubuntu 24.04 ships
-/// libclang-18 by default, which has broken headers (stdatomic.h, mmintrin.h).
-/// CI jobs that install a newer LLVM (e.g. clang-20) also get a working
-/// libclang in /usr/lib/llvm-20/lib -- we just need to tell bindgen about it.
-fn prefer_newest_libclang() {
-    if env::var_os("LIBCLANG_PATH").is_some() {
-        return;
-    }
+/// Find the newest clang resource directory on the system.
+///
+/// Ubuntu 24.04 ships libclang-18 whose built-in headers (stdatomic.h,
+/// mmintrin.h) are broken.  CI jobs install a newer clang (e.g. clang-20)
+/// whose resource directory at /usr/lib/llvm-20/lib/clang/20 has working
+/// headers.  We pass -resource-dir to bindgen's clang so it picks up those
+/// headers instead of the broken libclang-18 ones.
+fn newest_clang_resource_dir() -> Option<PathBuf> {
     let base = Path::new("/usr/lib");
     let mut best: Option<(u32, PathBuf)> = None;
-    if let Ok(entries) = std::fs::read_dir(base) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if let Some(ver_str) = name.strip_prefix("llvm-") {
-                if let Ok(ver) = ver_str.parse::<u32>() {
-                    let lib_dir = entry.path().join("lib");
-                    if lib_dir.is_dir() {
-                        if best.as_ref().map_or(true, |(v, _)| ver > *v) {
-                            best = Some((ver, lib_dir));
-                        }
-                    }
-                }
+    for entry in std::fs::read_dir(base).ok()?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some(ver_str) = name.strip_prefix("llvm-")
+            && let Ok(ver) = ver_str.parse::<u32>()
+        {
+            // Resource dir: /usr/lib/llvm-<N>/lib/clang/<N>
+            let resource_dir = entry.path().join("lib").join("clang").join(ver_str);
+            if resource_dir.join("include").is_dir()
+                && best.as_ref().map_or(true, |(v, _)| ver > *v)
+            {
+                best = Some((ver, resource_dir));
             }
         }
     }
-    if let Some((ver, lib_dir)) = best {
-        eprintln!("cpython-sys: using libclang from llvm-{ver}");
-        // SAFETY: build scripts are single-threaded.
-        unsafe { env::set_var("LIBCLANG_PATH", &lib_dir) };
-    }
+    best.map(|(_, p)| p)
 }
 
 fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
@@ -97,6 +90,18 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
 
     // Suppress all clang warnings (deprecation warnings, etc.)
     builder = builder.clang_arg("-w");
+
+    // Use the newest clang resource directory available on the system.
+    // Bindgen links against whatever libclang it finds (often an older
+    // system version), but the built-in headers in that version may be
+    // broken (e.g. libclang-18 on Ubuntu 24.04 has broken stdatomic.h
+    // and mmintrin.h).  Overriding -resource-dir makes clang use a
+    // newer set of built-in headers without changing which libclang.so
+    // is loaded.
+    if let Some(resource_dir) = newest_clang_resource_dir() {
+        eprintln!("cpython-sys: using clang resource dir {}", resource_dir.display());
+        builder = builder.clang_arg(format!("-resource-dir={}", resource_dir.display()));
+    }
 
     // Tell clang the correct target triple for cross-compilation when we have
     // an LLVM-specific triple. Otherwise let bindgen translate Cargo's TARGET
