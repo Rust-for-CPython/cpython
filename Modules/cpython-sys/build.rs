@@ -99,7 +99,10 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     // newer set of built-in headers without changing which libclang.so
     // is loaded.
     if let Some(resource_dir) = newest_clang_resource_dir() {
-        eprintln!("cpython-sys: using clang resource dir {}", resource_dir.display());
+        eprintln!(
+            "cpython-sys: using clang resource dir {}",
+            resource_dir.display()
+        );
         builder = builder.clang_arg(format!("-resource-dir={}", resource_dir.display()));
     }
 
