@@ -70,7 +70,8 @@ fn prefer_newest_libclang() {
     }
     if let Some((ver, lib_dir)) = best {
         eprintln!("cpython-sys: using libclang from llvm-{ver}");
-        env::set_var("LIBCLANG_PATH", &lib_dir);
+        // SAFETY: build scripts are single-threaded.
+        unsafe { env::set_var("LIBCLANG_PATH", &lib_dir) };
     }
 }
 
