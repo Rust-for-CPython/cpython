@@ -40,6 +40,34 @@ fn emit_rerun_instructions(builddir: Option<&str>) {
     }
 }
 
+/// Find the newest clang resource directory on the system.
+///
+/// Ubuntu 24.04 ships libclang-18 whose built-in headers (stdatomic.h,
+/// mmintrin.h) are broken.  CI jobs install a newer clang (e.g. clang-20)
+/// whose resource directory at /usr/lib/llvm-20/lib/clang/20 has working
+/// headers.  We pass -resource-dir to bindgen's clang so it picks up those
+/// headers instead of the broken libclang-18 ones.
+fn newest_clang_resource_dir() -> Option<PathBuf> {
+    let base = Path::new("/usr/lib");
+    let mut best: Option<(u32, PathBuf)> = None;
+    for entry in std::fs::read_dir(base).ok()?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some(ver_str) = name.strip_prefix("llvm-")
+            && let Ok(ver) = ver_str.parse::<u32>()
+        {
+            // Resource dir: /usr/lib/llvm-<N>/lib/clang/<N>
+            let resource_dir = entry.path().join("lib").join("clang").join(ver_str);
+            if resource_dir.join("include").is_dir()
+                && best.as_ref().map_or(true, |(v, _)| ver > *v)
+            {
+                best = Some((ver, resource_dir));
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 fn gil_disabled(srcdir: &Path, builddir: Option<&str>) -> bool {
     let mut candidates = Vec::new();
     if let Some(build) = builddir {
@@ -62,6 +90,21 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
 
     // Suppress all clang warnings (deprecation warnings, etc.)
     builder = builder.clang_arg("-w");
+
+    // Use the newest clang resource directory available on the system.
+    // Bindgen links against whatever libclang it finds (often an older
+    // system version), but the built-in headers in that version may be
+    // broken (e.g. libclang-18 on Ubuntu 24.04 has broken stdatomic.h
+    // and mmintrin.h).  Overriding -resource-dir makes clang use a
+    // newer set of built-in headers without changing which libclang.so
+    // is loaded.
+    if let Some(resource_dir) = newest_clang_resource_dir() {
+        eprintln!(
+            "cpython-sys: using clang resource dir {}",
+            resource_dir.display()
+        );
+        builder = builder.clang_arg(format!("-resource-dir={}", resource_dir.display()));
+    }
 
     // Tell clang the correct target triple for cross-compilation when we have
     // an LLVM-specific triple. Otherwise let bindgen translate Cargo's TARGET
@@ -150,6 +193,7 @@ fn generate_c_api_bindings(srcdir: &Path, builddir: Option<&str>, out_path: &Pat
     for dir in include_dirs {
         builder = builder.clang_arg(format!("-I{}", dir.display()));
     }
+
     builder = add_target_clang_args(builder, builddir);
 
     let bindings = builder
