@@ -168,6 +168,7 @@ The following sub-projects are for individual modules of the standard
 library which are implemented in C; each one builds a DLL (renamed to
 .pyd) of the same name as the project:
  * _asyncio
+ * _base64
  * _ctypes
  * _ctypes_test
  * _decimal

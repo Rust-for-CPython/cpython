@@ -116,7 +116,7 @@ if "%IncludeExternals%"=="" set IncludeExternals=true
 if "%IncludeCTypes%"=="" set IncludeCTypes=true
 if "%IncludeSSL%"=="" set IncludeSSL=true
 if "%IncludeTkinter%"=="" set IncludeTkinter=true
-if "%UseJIT%" NEQ "true" set IncludeLLVM=false
+if "%IncludeLLVM%"=="" if "%UseJIT%"=="true" (set IncludeLLVM=true) else (set IncludeLLVM=false)
 
 if "%IncludeExternals%"=="true" call "%dir%get_externals.bat"
 
