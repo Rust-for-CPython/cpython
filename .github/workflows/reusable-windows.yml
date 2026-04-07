@@ -34,6 +34,9 @@ jobs:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
         persist-credentials: false
+    - uses: ./.github/setup-rust-windows
+      with:
+        arch: ${{ inputs.arch }}
     - name: Register MSVC problem matcher
       if: inputs.arch != 'Win32'
       run: echo "::add-matcher::.github/problem-matchers/msvc.json"

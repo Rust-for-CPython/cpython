@@ -1,0 +1,38 @@
+name: Set up Rust and LLVM for Windows
+description: >-
+  Install the pinned Rust toolchain with Windows cross-compile targets and
+  a version of LLVM whose libclang is loadable by bindgen.
+
+inputs:
+  arch:
+    description: CPU architecture (x64, Win32, arm64)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@1.91.1
+      with:
+        targets: i686-pc-windows-msvc,x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+    # LIBCLANG_PATH must be set explicitly so the vcxproj uses the LLVM we
+    # install here rather than the VS-bundled LLVM whose clang headers have
+    # AVX intrinsic bugs.  The values are hardcoded literals (no attacker-
+    # controlled input), so the GITHUB_ENV writes are safe.
+    - name: Install LLVM for bindgen
+      if: inputs.arch != 'arm64'
+      shell: cmd
+      run: | # zizmor: ignore[github-env]
+        choco install llvm --allow-downgrade --no-progress --version 21.1.0
+        if not exist "C:\Program Files\LLVM\bin\libclang.dll" exit /b 1
+        echo LIBCLANG_PATH=C:\Program Files\LLVM\bin>> "%GITHUB_ENV%"
+    # Chocolatey's LLVM package only ships x64 binaries, which an ARM64-native
+    # cargo process cannot load.  Install the official ARM64 build directly.
+    - name: Install LLVM for bindgen (ARM64)
+      if: inputs.arch == 'arm64'
+      shell: pwsh
+      run: | # zizmor: ignore[github-env]
+        $installer = Join-Path $env:RUNNER_TEMP 'LLVM-21.1.0-woa64.exe'
+        Invoke-WebRequest 'https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.0/LLVM-21.1.0-woa64.exe' -OutFile $installer
+        Start-Process -Wait -FilePath $installer -ArgumentList '/S','/D=C:\Program Files\LLVM'
+        if (!(Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { exit 1 }
+        echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV

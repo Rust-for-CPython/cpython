@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|ARM">
+      <Configuration>Debug</Configuration>
+      <Platform>ARM</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|ARM64">
+      <Configuration>Debug</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGInstrument|ARM">
+      <Configuration>PGInstrument</Configuration>
+      <Platform>ARM</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGInstrument|ARM64">
+      <Configuration>PGInstrument</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGInstrument|Win32">
+      <Configuration>PGInstrument</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGInstrument|x64">
+      <Configuration>PGInstrument</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGUpdate|ARM">
+      <Configuration>PGUpdate</Configuration>
+      <Platform>ARM</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGUpdate|ARM64">
+      <Configuration>PGUpdate</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGUpdate|Win32">
+      <Configuration>PGUpdate</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PGUpdate|x64">
+      <Configuration>PGUpdate</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM">
+      <Configuration>Release</Configuration>
+      <Platform>ARM</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{D7B7A122-80A0-4AFB-9C06-18C29B3178E4}</ProjectGuid>
+    <RootNamespace>_base64</RootNamespace>
+    <Keyword>MakeFileProj</Keyword>
+  </PropertyGroup>
+  <Import Project="python.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <CharacterSet>NotSet</CharacterSet>
+    <SupportPGO>false</SupportPGO>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <TargetExt>$(PyStdlibPydExt)</TargetExt>
+  </PropertyGroup>
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="pyproject.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.30319.1</_ProjectFileVersion>
+    <BundledLlvmTag>llvm-21.1.4.0</BundledLlvmTag>
+    <CargoProfile Condition="$(Configuration) == 'Debug'">dev</CargoProfile>
+    <CargoProfile Condition="$(Configuration) != 'Debug'">release</CargoProfile>
+    <CargoBuildSubdir Condition="$(Configuration) == 'Debug'">debug</CargoBuildSubdir>
+    <CargoBuildSubdir Condition="$(Configuration) != 'Debug'">release</CargoBuildSubdir>
+    <CargoTarget Condition="'$(Platform)' == 'Win32'">i686-pc-windows-msvc</CargoTarget>
+    <CargoTarget Condition="'$(Platform)' == 'x64'">x86_64-pc-windows-msvc</CargoTarget>
+    <CargoTarget Condition="'$(Platform)' == 'ARM'">thumbv7a-pc-windows-msvc</CargoTarget>
+    <CargoTarget Condition="'$(Platform)' == 'ARM64'">aarch64-pc-windows-msvc</CargoTarget>
+    <CargoTargetDir>$(IntDir)cargo\</CargoTargetDir>
+    <CargoTargetDirNoSlash>$(CargoTargetDir.TrimEnd(`\`))</CargoTargetDirNoSlash>
+    <BuildPathNoSlash>$(BuildPath.TrimEnd(`\`))</BuildPathNoSlash>
+    <PythonBuildDir>$(PySourcePath)PC</PythonBuildDir>
+    <CargoWorkspaceManifest>$(PySourcePath)Cargo.toml</CargoWorkspaceManifest>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and '$(LIBCLANG_PATH)' != ''">$(LIBCLANG_PATH)</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('$(ExternalsDir)$(BundledLlvmTag)\bin\libclang.dll')">$(ExternalsDir)$(BundledLlvmTag)\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('$(ExternalsDir)$(BundledLlvmTag)\bin\clang.dll')">$(ExternalsDir)$(BundledLlvmTag)\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and '$(LLVMInstallDir)' != '' and Exists('$(LLVMInstallDir)\bin\libclang.dll')">$(LLVMInstallDir)\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and '$(LLVMInstallDir)' != '' and Exists('$(LLVMInstallDir)\bin\clang.dll')">$(LLVMInstallDir)\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('$(VCInstallDir)Tools\Llvm\x64\bin\libclang.dll')">$(VCInstallDir)Tools\Llvm\x64\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('$(VCInstallDir)Tools\Llvm\x64\bin\clang.dll')">$(VCInstallDir)Tools\Llvm\x64\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('$(VCInstallDir)Tools\Llvm\bin\libclang.dll')">$(VCInstallDir)Tools\Llvm\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('$(VCInstallDir)Tools\Llvm\bin\clang.dll')">$(VCInstallDir)Tools\Llvm\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('C:\Program Files\LLVM\bin\libclang.dll')">C:\Program Files\LLVM\bin</LibClangPath>
+    <LibClangPath Condition="'$(LibClangPath)' == '' and Exists('C:\Program Files\LLVM\bin\clang.dll')">C:\Program Files\LLVM\bin</LibClangPath>
+    <TargetDir>$(OutDir)</TargetDir>
+    <TargetPath>$(TargetDir)$(TargetName)$(TargetExt)</TargetPath>
+    <RustExtensionPath>$(CargoTargetDirNoSlash)\$(CargoTarget)\$(CargoBuildSubdir)\_base64.dll</RustExtensionPath>
+    <RustExtensionPdb>$(CargoTargetDirNoSlash)\$(CargoTarget)\$(CargoBuildSubdir)\_base64.pdb</RustExtensionPdb>
+    <TargetPdb>$(OutDir)$(TargetName).pdb</TargetPdb>
+    <NMakeBuildCommandLine>setlocal
+if "$(Configuration)"=="Debug" (set "PY_DEBUG=1") else (set "PY_DEBUG=")
+if "$(DisableGil)"=="true" (set "PY_GIL_DISABLED=1") else (set "PY_GIL_DISABLED=")
+where cargo &gt;NUL 2&gt;NUL || (echo WARNING: cargo was not found on PATH, skipping _base64 &amp; exit /b 0)
+if not "$(LibClangPath)"=="" set "LIBCLANG_PATH=$(LibClangPath)"
+if "$(LibClangPath)"=="" if not defined LIBCLANG_PATH (echo WARNING: libclang was not found, skipping _base64 &amp; exit /b 0)
+if defined LIBCLANG_PATH if not exist "%LIBCLANG_PATH%\libclang.dll" if not exist "%LIBCLANG_PATH%\clang.dll" (echo WARNING: libclang.dll not found at %LIBCLANG_PATH%, skipping _base64 &amp; exit /b 0)
+if not exist "$(CargoTargetDirNoSlash)" mkdir "$(CargoTargetDirNoSlash)"
+set "CARGO_TARGET_DIR=$(CargoTargetDirNoSlash)"
+set "PYTHON_BUILD_DIR=$(PythonBuildDir)"
+set "LIBPYTHON=&quot;/LIBPATH:$(BuildPathNoSlash)&quot; &quot;$(PyDllName).lib&quot;"
+cargo build --lib --locked --package _base64 --manifest-path "$(CargoWorkspaceManifest)" --profile $(CargoProfile) --target $(CargoTarget)
+if errorlevel 1 exit /b 1
+if not exist "$(RustExtensionPath)" (echo ERROR: cargo did not produce $(RustExtensionPath) &amp; exit /b 1)
+copy /Y "$(RustExtensionPath)" "$(TargetPath)" &gt;NUL
+if errorlevel 1 exit /b 1
+if exist "$(RustExtensionPdb)" copy /Y "$(RustExtensionPdb)" "$(TargetPdb)" &gt;NUL</NMakeBuildCommandLine>
+    <NMakeCleanCommandLine>if exist "$(TargetPath)" del /F /Q "$(TargetPath)"
+if exist "$(TargetPdb)" del /F /Q "$(TargetPdb)"
+if exist "$(CargoTargetDirNoSlash)" rmdir /S /Q "$(CargoTargetDirNoSlash)"</NMakeCleanCommandLine>
+    <NMakeOutput>$(TargetPath)</NMakeOutput>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\Modules\_base64\Cargo.toml" />
+    <None Include="..\Modules\_base64\build.rs" />
+    <None Include="..\Modules\_base64\src\lib.rs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="pythoncore.vcxproj">
+      <Project>{CF7AC3D1-E2DF-41D2-BEA6-1E2556CDEA26}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+  <Target Name="_SignBuild" AfterTargets="Build" Condition="'$(_SignCommand)' != '' and $(SupportSigning) and Exists('$(TargetPath)')">
+    <Exec Command='$(_SignCommand) "$(TargetPath)" || $(_SignCommand) "$(TargetPath)" || $(_SignCommand) "$(TargetPath)"' ContinueOnError="false" />
+  </Target>
+  <Target Name="ResolveAssemblyReferences" />
+</Project>
