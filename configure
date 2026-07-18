@@ -17532,7 +17532,6 @@ esac
 
 
 
-
   if test "$ac_sys_system" = "Emscripten" -a -z "$LIBSQLITE3_CFLAGS" -a -z "$LIBSQLITE3_LIBS"
 then :
 
