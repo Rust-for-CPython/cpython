@@ -11,8 +11,9 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: dtolnay/rust-toolchain@1.91.1
+    - uses: dtolnay/rust-toolchain@ab40b01f54fe82bdf65693ea090a1e4942c136e7 # 1.91.1
       with:
+        toolchain: 1.91.1
         targets: i686-pc-windows-msvc,x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
     # LIBCLANG_PATH must be set explicitly so the vcxproj uses the LLVM we
     # install here rather than the VS-bundled LLVM whose clang headers have
@@ -20,11 +21,11 @@ runs:
     # controlled input), so the GITHUB_ENV writes are safe.
     - name: Install LLVM for bindgen
       if: inputs.arch != 'arm64'
-      shell: cmd
+      shell: pwsh
       run: | # zizmor: ignore[github-env]
         choco install llvm --allow-downgrade --no-progress --version 21.1.0
-        if not exist "C:\Program Files\LLVM\bin\libclang.dll" exit /b 1
-        echo LIBCLANG_PATH=C:\Program Files\LLVM\bin>> "%GITHUB_ENV%"
+        if (!(Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { exit 1 }
+        echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
     # Chocolatey's LLVM package only ships x64 binaries, which an ARM64-native
     # cargo process cannot load.  Install the official ARM64 build directly.
     - name: Install LLVM for bindgen (ARM64)
