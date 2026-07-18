@@ -343,8 +343,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: dtolnay/rust-toolchain@ab40b01f54fe82bdf65693ea090a1e4942c136e7 # 1.91.1
         with:
+          toolchain: 1.91.1
           targets: ${{ matrix.arch }}-linux-android
       - name: Build and test
         run: python3 Platforms/Android ci --fast-ci ${{ matrix.arch }}-linux-android
@@ -359,8 +360,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: dtolnay/rust-toolchain@ab40b01f54fe82bdf65693ea090a1e4942c136e7 # 1.91.1
         with:
+          toolchain: 1.91.1
           targets: aarch64-apple-ios-sim
       # GitHub recommends explicitly selecting the desired Xcode version:
       # https://github.com/actions/runner-images/issues/12541#issuecomment-3083850140
