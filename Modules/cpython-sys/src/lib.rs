@@ -57,6 +57,15 @@ pub const _Py_STATIC_IMMORTAL_INITIAL_REFCNT: Py_ssize_t =
 #[cfg(not(target_pointer_width = "64"))]
 pub const _Py_STATIC_IMMORTAL_INITIAL_REFCNT: Py_ssize_t = (7u32 << 28) as Py_ssize_t;
 
+/// Whether these bindings were generated for a free-threaded (`Py_GIL_DISABLED`)
+/// build. Exposed as a const so dependent crates can branch on it without
+/// re-detecting the build configuration (the `py_gil_disabled` cfg is local to
+/// this crate).
+#[cfg(py_gil_disabled)]
+pub const GIL_DISABLED: bool = true;
+#[cfg(not(py_gil_disabled))]
+pub const GIL_DISABLED: bool = false;
+
 #[repr(transparent)]
 pub struct PyObject(std::cell::UnsafeCell<_object>);
 

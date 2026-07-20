@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    "Modules/_base64", "Modules/cpython-build-helper", "Modules/cpython-rust-staticlib",
-    "Modules/cpython-sys"
+    "Modules/_base64",
+    "Modules/cpython-api",
+    "Modules/cpython-api-macros",
+    "Modules/cpython-build-helper",
+    "Modules/cpython-rust-staticlib",
+    "Modules/cpython-sys",
 ]

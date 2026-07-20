@@ -6,8 +6,8 @@ version = 4
 name = "_base64"
 version = "0.1.0"
 dependencies = [
+ "cpython-api",
  "cpython-build-helper",
- "cpython-sys",
 ]
 
 [[package]]
@@ -69,6 +69,23 @@ dependencies = [
  "glob",
  "libc",
  "libloading",
+]
+
+[[package]]
+name = "cpython-api"
+version = "0.1.0"
+dependencies = [
+ "cpython-api-macros",
+ "cpython-sys",
+]
+
+[[package]]
+name = "cpython-api-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

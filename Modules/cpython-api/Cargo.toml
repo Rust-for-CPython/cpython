@@ -1,0 +1,11 @@
+[package]
+name = "cpython-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpython-sys = { path = "../cpython-sys" }
+cpython-api-macros = { path = "../cpython-api-macros" }
+
+[lib]
+name = "cpython_api"
