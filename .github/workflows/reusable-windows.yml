@@ -41,6 +41,7 @@ jobs:
       if: inputs.arch != 'Win32'
       run: echo "::add-matcher::.github/problem-matchers/msvc.json"
     - name: Build CPython
+      id: build_cpython
       # msvc::musttail is not supported for debug builds, so we have to
       # switch to release.
       run: >-
@@ -50,6 +51,20 @@ jobs:
         -p "${ARCH}"
         ${{ fromJSON(inputs.free-threading) && '--disable-gil' || '' }}
       shell: bash
+    - name: Upload Rust linker diagnostics
+      if: failure() && steps.build_cpython.outcome == 'failure'
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      with:
+        name: windows-rust-link-diagnostics-${{ inputs.arch }}-${{ inputs.interpreter }}-${{ inputs.free-threading }}
+        if-no-files-found: warn
+        path: |
+          PCbuild/obj/**/_base64/cargo/**/build/cpython-sys-*/out/c_api.rs
+          PCbuild/obj/**/_base64/cargo/**/build/*/output
+          PCbuild/obj/**/_base64/cargo/**/.fingerprint/*/run-build-script-*.json
+          PCbuild/obj/**/_base64/cargo/**/deps/rustc*/
+          PCbuild/obj/**/pythoncore/pythoncore.tlog/link.*.tlog
+          PCbuild/**/python*.dll
+          PCbuild/**/python*.lib
     - name: Display build info
       run: .\\python.bat -m test.pythoninfo
     - name: Tests
