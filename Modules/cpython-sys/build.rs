@@ -336,11 +336,9 @@ fn patch_windows_imported_pointer_globals(bindings: String, dll_name: &str) -> S
         if !matches!(*static_item.ty, syn::Type::Ptr(_)) {
             continue;
         }
-        foreign_mod
-            .attrs
-            .push(syn::parse_quote!(
-                #[cfg_attr(windows, link(name = #dll_name, kind = "raw-dylib"))]
-            ));
+        foreign_mod.attrs.push(syn::parse_quote!(
+            #[cfg_attr(windows, link(name = #dll_name, kind = "raw-dylib"))]
+        ));
     }
 
     prettyplease::unparse(&file)
