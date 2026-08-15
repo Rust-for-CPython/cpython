@@ -326,6 +326,8 @@ fn patch_windows_imported_pointer_globals(bindings: String, dll_name: &str) -> S
     // indirection correctly — two loads, matching `__declspec(dllimport)`.
     let mut file = syn::parse_file(&bindings).expect("bindgen emitted invalid Rust");
 
+    // Bindgen generates a single extern block per symbol, so we can iterate over all items
+    // and patch the pointer-valued statics.
     for item in &mut file.items {
         let syn::Item::ForeignMod(foreign_mod) = item else {
             continue;
