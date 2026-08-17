@@ -324,52 +324,26 @@ fn patch_windows_imported_pointer_globals(bindings: String, dll_name: &str) -> S
     // The fix: annotate pointer-valued extern statics with `raw-dylib` on
     // Windows so Rust generates the import thunk itself and handles the IAT
     // indirection correctly — two loads, matching `__declspec(dllimport)`.
-    let lines: Vec<_> = bindings.lines().collect();
-    let mut patched = String::with_capacity(bindings.len());
-    let mut index = 0;
+    let mut file = syn::parse_file(&bindings).expect("bindgen emitted invalid Rust");
 
-    while index < lines.len() {
-        if lines[index] == "unsafe extern \"C\" {"
-            && lines
-                .get(index + 1)
-                .and_then(|l| parse_pointer_static_decl(l))
-                .is_some()
-            && lines.get(index + 2).is_some_and(|l| l.trim() == "}")
-        {
-            patched.push_str(&format!(
-                "#[cfg_attr(windows, link(name = \"{dll_name}\", kind = \"raw-dylib\"))]\n"
-            ));
-            // Keep the original extern block unchanged.
-            for i in index..index + 3 {
-                patched.push_str(lines[i]);
-                patched.push('\n');
-            }
-            index += 3;
+    // Bindgen generates a single extern block per symbol, so we can iterate over all items
+    // and patch the pointer-valued statics.
+    for item in &mut file.items {
+        let syn::Item::ForeignMod(foreign_mod) = item else {
+            continue;
+        };
+        let [syn::ForeignItem::Static(static_item)] = foreign_mod.items.as_slice() else {
+            continue;
+        };
+        if !matches!(*static_item.ty, syn::Type::Ptr(_)) {
             continue;
         }
-
-        patched.push_str(lines[index]);
-        patched.push('\n');
-        index += 1;
+        foreign_mod.attrs.push(syn::parse_quote!(
+            #[cfg_attr(windows, link(name = #dll_name, kind = "raw-dylib"))]
+        ));
     }
 
-    patched
-}
-
-fn parse_pointer_static_decl(line: &str) -> Option<(&str, bool, &str)> {
-    let mut decl = line.trim().strip_prefix("pub static ")?;
-    let is_mut = decl.starts_with("mut ");
-    if is_mut {
-        decl = decl.strip_prefix("mut ")?;
-    }
-
-    let (name, ty) = decl.split_once(':')?;
-    let ty = ty.trim().strip_suffix(';')?;
-    if !ty.starts_with('*') {
-        return None;
-    }
-
-    Some((name.trim(), is_mut, ty))
+    prettyplease::unparse(&file)
 }
 
 fn add_target_clang_args(
