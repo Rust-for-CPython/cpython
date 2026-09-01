@@ -228,25 +228,16 @@ fn generate_c_api_bindings(
         }
     }
 
-    if !have_sysroot && cargo_target.contains("emscripten") {
-        let mut candidates = Vec::new();
-        if let Ok(emsdk) = env::var("EMSDK") {
-            candidates.push(
-                PathBuf::from(&emsdk)
-                    .join("upstream")
-                    .join("emscripten")
-                    .join("cache")
-                    .join("sysroot"),
-            );
-        }
-        if let Ok(cc) = env::var("PY_CC")
-            && let Some(parts) = shlex::split(&cc)
-            && let Some(binary) = parts.first()
-            && let Some(bin_dir) = Path::new(binary).parent()
-        {
-            candidates.push(bin_dir.join("cache").join("sysroot"));
-        }
-        if let Some(sysroot) = candidates.into_iter().find(|p| p.is_dir()) {
+    if !have_sysroot
+        && cargo_target.contains("emscripten")
+        && let Ok(emsdk) = env::var("EMSDK")
+    {
+        let sysroot = PathBuf::from(&emsdk)
+            .join("upstream")
+            .join("emscripten")
+            .join("cache")
+            .join("sysroot");
+        if sysroot.is_dir() {
             builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
             have_sysroot = true;
         }
