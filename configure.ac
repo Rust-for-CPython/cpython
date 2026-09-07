@@ -2638,6 +2638,8 @@ AS_CASE([$ac_sys_system],
     dnl Start with 20 MB and allow to grow
     AS_VAR_APPEND([LINKFORSHARED], [" -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=20971520"])
 
+    AS_VAR_APPEND([LDFLAGS_NODIST], [" -fwasm-exceptions"])
+
     dnl Include file system support
     AS_VAR_APPEND([LINKFORSHARED], [" -sFORCE_FILESYSTEM -lidbfs.js -lnodefs.js -lproxyfs.js -lworkerfs.js"])
     AS_VAR_APPEND([LINKFORSHARED], [" -sEXPORTED_RUNTIME_METHODS=FS,callMain,ENV,HEAPU32,TTY,ERRNO_CODES"])

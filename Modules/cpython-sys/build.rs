@@ -38,6 +38,7 @@ fn emit_rerun_instructions(builddir: Option<&str>) {
         "PY_CFLAGS",
         "TARGET",
         "WASI_SDK_PATH",
+        "EMSDK",
     ] {
         println!("cargo:rerun-if-env-changed={var}");
     }
@@ -221,6 +222,21 @@ fn generate_c_api_bindings(
         && let Ok(sdk_path) = env::var("WASI_SDK_PATH")
     {
         let sysroot = PathBuf::from(&sdk_path).join("share").join("wasi-sysroot");
+        if sysroot.is_dir() {
+            builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
+            have_sysroot = true;
+        }
+    }
+
+    if !have_sysroot
+        && cargo_target.contains("emscripten")
+        && let Ok(emsdk) = env::var("EMSDK")
+    {
+        let sysroot = PathBuf::from(&emsdk)
+            .join("upstream")
+            .join("emscripten")
+            .join("cache")
+            .join("sysroot");
         if sysroot.is_dir() {
             builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
             have_sysroot = true;
