@@ -2410,6 +2410,7 @@ AS_CASE([$ac_sys_system],
 
     dnl map int64_t and uint64_t to JS bigint
     AS_VAR_APPEND([LDFLAGS_NODIST], [" -sWASM_BIGINT"])
+    AS_VAR_APPEND([LDFLAGS_NODIST], [" -fwasm-exceptions"])
 
     dnl Include file system support
     AS_VAR_APPEND([LINKFORSHARED], [" -sFORCE_FILESYSTEM -lidbfs.js -lnodefs.js -lproxyfs.js -lworkerfs.js"])
