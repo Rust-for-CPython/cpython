@@ -281,6 +281,9 @@ fn generate_c_api_bindings(
         .allowlist_function("_?Py.*")
         .allowlist_type("_?Py.*")
         .allowlist_var("_?Py.*")
+        // Version macros (PY_VERSION_HEX etc.) don't match the case-sensitive
+        // Py.* patterns above but are needed for PyABIInfo construction.
+        .allowlist_var("PY_(MAJOR|MINOR|MICRO)_VERSION|PY_VERSION_HEX|PY_RELEASE_(LEVEL|SERIAL)")
         .blocklist_type("^PyMethodDef$")
         .blocklist_type("PyObject")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))

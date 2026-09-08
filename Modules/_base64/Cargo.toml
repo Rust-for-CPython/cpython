@@ -5,7 +5,7 @@ edition = "2024"
 rust-version.workspace = true
 
 [dependencies]
-cpython-sys ={ path = "../cpython-sys" }
+cpython-api = { path = "../cpython-api" }
 
 [build-dependencies]
 cpython-build-helper = { path = "../cpython-build-helper" }
