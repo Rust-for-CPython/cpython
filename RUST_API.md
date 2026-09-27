@@ -2,9 +2,15 @@
 
 ### Overview
 
-This document designs a safe Rust API for in-tree CPython modules, initially
-covering the features needed by `zlib` and providing a base for later Rust
+This document designs a safe Rust API for in-tree CPython modules, using
+`zlib` to drive the initial requirements and providing a base for later Rust
 work.
+
+`zlib` is the first full migration target. The `_base64` and `Encoder`
+examples below are used to illustrate individual API features. Preserving
+either module's buffer-accepting interface requires the buffer work in the
+appendix. Stateful `zlib` additionally requires the locking and output-buffer
+designs discussed there.
 
 ### Context
 
@@ -24,7 +30,7 @@ In priority order, the API should:
 5. use modern APIs such as `PyModExport`.
 
 Every use of `unsafe` requires a `// SAFETY:` comment stating its proof
-obligation. No panic may escape a non-unwinding C ABI.
+obligation. No panic may escape a non-unwinding C ABI, as this is undefined behavior in Rust.
 
 ### Non-goals
 
@@ -35,7 +41,7 @@ them.
 ### Specific guidelines
 
 - Encode CPython contracts in the type system where practical.
-- Use macros sparingly to control compile time.
+- Control compile times
 - Preserve Rust's initialization, aliasing, and concurrency invariants.
 - Support both GIL and free-threaded builds.
 
@@ -58,7 +64,7 @@ them.
 
 #### Bindings and the FFI boundary
 
-`cpython-sys` generates raw bindings at build time from `Python.h`, internal
+The `cpython-sys` crate generates raw bindings at build time from `Python.h`, internal
 headers, and the active `pyconfig.h`. This captures platform, target, debug,
 and free-threading-dependent layout information. Bindgen allowlists public and private
 `Py*` and `_Py*` names. Some C constructs are not replicatable via C bindings such as macros.
@@ -79,71 +85,112 @@ access is reserved for audited leaf operations; operations that can run
 callbacks or change attachment require exclusive access. The scope protocol
 below maintains attachment without a TLS check at every leaf operation.
 An operation without a capability needs an audited proof that its entire
-call path is thread-state-free. Ordinary `Drop` only submits releases; it
-never obtains a capability to decref synchronously. Existing C APIs may
-still obtain the current state internally.
+call path is thread-state-free. Ordinary `Drop` only submits releases or
+applies the statically immortal singleton exception below; it never obtains
+a capability to decref synchronously. Existing C APIs may still obtain the
+current state internally.
 
 #### Interpreter identity and lifetime
 
-Each interpreter lifetime has a private `InterpreterKey`, represented by a
-nonzero 64-bit generation number. CPython allocates it from a process-wide
-sequence that survives `Py_FinalizeEx` and reinitialization; exhaustion fails
-interpreter creation rather than reusing a key. A main interpreter created
-after reinitialization receives a new key too. Existing interpreter IDs alone
-do not satisfy this contract: `Python/pystate.c` currently resets `next_id`
-when enabling the interpreter registry.
+Each interpreter lifetime has a private `InterpreterKey`: a nonzero 64-bit
+generation number from a process-wide counter that must survive
+`Py_FinalizeEx` and the runtime reset in `_PyRuntimeState_Init`. Every
+interpreter, including a main interpreter created after reinitialization,
+receives a fresh key; exhaustion fails interpreter creation rather than
+reusing one. Public interpreter IDs cannot serve this role:
+`_PyInterpreterState_Enable` resets `next_id`, the main interpreter's ID must
+be zero, and `PyInterpreterView_FromMain` hardcodes that value. For the same
+reason, an interpreter view, which resolves by public ID, cannot prove
+generation identity after reinitialization. The key adds one field per
+interpreter and no extra word to each Rust handle.
 
-The key records the interpreter under whose API contract a reference was
-acquired and is usable, not which interpreter allocated its storage. CPython
-may supply process-global constants or static types to several interpreters.
-An accessor called in interpreter B may return a B-associated handle to such
-an object even if its storage originated in the main interpreter. An existing
-A-associated handle cannot be relabeled B merely because the pointer is
-immortal or is equal to another pointer. Only an audited CPython contract can
-authorize sharing; ordinary cross-interpreter transfer reconstructs a new
-object through a separately audited conversion.
+A key names the interpreter under whose API contract a reference was
+acquired and may be used, not the interpreter that allocated its storage. An
+accessor called in interpreter B may return a B-associated handle to a
+process-global constant or static type that originated in the main
+interpreter. An existing A-associated handle is never relabeled B merely
+because the object is immortal or the pointers compare equal. Only an audited
+CPython contract can authorize sharing; ordinary cross-interpreter transfer
+reconstructs the object through a separately audited conversion.
 
-There is no generic object-to-interpreter lookup. `PyObject` headers do not
-carry this association, and the free-threaded `ob_tid` describes refcount
-thread ownership, not interpreter identity. Generated glue obtains the key
-from the attached thread state's interpreter and preserves it through handle
-conversions. Reading the current interpreter and its cached key requires no
-allocation, registry search, or lock. No `PyObject` header change is required.
+Objects carry no interpreter association, so there is no generic
+object-to-interpreter lookup and no `PyObject` header change is required. The
+free-threaded `ob_tid` records refcount thread ownership, not interpreter
+identity. Generated glue reads the key from the attached thread state's
+interpreter, which needs no allocation, registry search, or lock, and
+preserves it through handle conversions.
 
-Identity does not prove liveness. Each active outermost Rust entry holds an
-interpreter-finalization lease, including while temporarily detached. Nested
-entries for the same protected thread state reuse that protection. The lease
-is held by private entry glue, cannot escape to user code, and is released on
-normal return and unwind after all scoped values have been consumed, queued
-releases have been drained or transferred, and panic reporting has finished. Safe
-APIs must not initiate or synchronously wait for destruction of that
-interpreter while holding its lease. A stored `Py<T>` does not hold a lease:
-otherwise module state could prevent the shutdown needed to destroy itself.
+A key identifies an interpreter but does not keep it alive. That is the job
+of an interpreter-finalization lease, held by each Rust entry for its whole
+duration, including while detached. Finalization waits until no lease
+remains. Nested entries acquire their own leases rather than searching for
+an enclosing one. While an enclosing entry holds a lease on the same
+interpreter, finalization cannot close admission, so the nested acquisition
+succeeds. Private entry glue owns the lease and releases it
+last, on return or unwind, after every scoped value has been consumed, queued
+releases have been drained or transferred, and panic reporting has finished.
+Safe APIs must not start, or block waiting for, finalization of an
+interpreter whose lease they hold, since that finalization would wait on
+their own lease. A stored `Py<T>` never holds a lease; otherwise a `Py<T>` in
+module state would block the shutdown that destroys that module state.
 
-The lease follows the lifetime protection of
-[PEP 788 interpreter guards](https://peps.python.org/pep-0788/), using a new
-private stack-based entry API to avoid allocating a public guard on each
-callback. Acquisition must synchronize with finalization's admission barrier;
-checking a finalizing flag before incrementing a counter is insufficient.
-Normal entry fails before exposing Rust references if admission has closed.
-Generated callbacks that CPython legitimately invokes during finalization
-instead receive private cleanup authorization from the finalizing thread.
-This also covers synchronous reentrant callbacks caused by those finalizers.
-Their contexts are limited to that callback's lifetime and cannot request
-explicit detachment or unrestricted foreign-library interoperation. Audited
-synchronous C calls may temporarily detach internally only if the cleanup
-authorization protects their state through restoration and finalization
-cannot advance until the call returns.
-Neither user code nor an arbitrary foreign thread can manufacture cleanup
-authorization. Traversal has its separate restricted visitor capability and
-cannot acquire a general context merely to bypass its restrictions.
+The lease must span the whole entry, not just explicit `detach` and `interop`
+calls. Attachment already protects the entry thread itself, because
+finalization hangs a paused thread rather than resuming it. It does not
+protect borrows the entry has lent out: `&S`, `&C`, and `&[u8]` point to
+`Sync` data, so safe code can pass them to scoped worker threads.
 
-The initial API creates contexts only at generated C entries. A future native
-thread entry API must select an explicit interpreter key, acquire lifetime
-protection before attachment, and report shutdown failure without a Python
-exception when detached. It must not use `PyGILState_Ensure` to implicitly
-select the main interpreter. Raw C callers remain responsible for presenting
-valid callback inputs and obeying CPython's interpreter contracts.
+1. An entry on a daemon thread lends `&S` to a scoped worker.
+2. The entry thread calls Python, which detaches internally, for example in
+   `socket.recv`.
+3. Finalization hangs the daemon thread on reattach and removes its thread
+   state.
+4. The worker is still reading `S`.
+
+On free-threaded builds, module objects and module-level functions use
+deferred reference counting, and the collector finds their stack references
+only through registered thread states. After step 3 those references are no
+longer roots, so the module and `S` can be freed while the worker reads `S`.
+Leasing only explicit detaches would not help, because step 2 is not one, and
+a bare Rust reference has no destructor with which to release a lease of its
+own. The whole-entry lease also keeps the entry's release sink valid until it
+is drained.
+
+The cost is that a Rust entry blocked indefinitely in a Python callback also
+blocks interpreter shutdown indefinitely; the appendix discusses the
+migration impact. This is deliberate and must not be weakened by expiring the
+entry's references or abandoning its accepted releases.
+
+[PEP 788 interpreter guards](https://peps.python.org/pep-0788/) are the basis
+for the lease mechanism. A new private
+stack-based entry API uses the existing `try_acquire_interp_guard` CAS,
+avoiding a guard allocation per callback. A decrement-and-unpark operation
+factored out of `PyInterpreterGuard_Close` lets a stack guard release its
+lease without freeing its storage. Acquisition must synchronize with
+finalization's admission barrier; checking a finalizing flag before
+incrementing a counter is insufficient. Once admission closes, normal entry
+fails before exposing any Rust reference.
+
+Callbacks that CPython legitimately invokes during finalization, and
+synchronous reentrant callbacks caused by them, instead receive private
+cleanup authorization from the finalizing thread. Their contexts last only
+for that callback and cannot request explicit detachment or unrestricted
+foreign-library interoperation. An audited synchronous C call may detach
+internally only if the authorization protects its state through restoration
+and finalization cannot advance until the call returns. Neither user code nor
+an arbitrary foreign thread can manufacture cleanup authorization, and
+traversal cannot turn its restricted visitor capability into a general
+context.
+
+The initial API creates contexts only at generated C entries. A future safe
+native-thread entry should reuse `PyThreadState_Ensure` and
+`PyThreadState_EnsureFromView`, adding generation validation and the scope
+protocol below. It must take an explicit interpreter key rather than trusting
+view lookup, acquire matching lifetime protection before attaching, and
+report shutdown failure without a Python exception while detached.
+`PyGILState_Ensure` must not implicitly select the main interpreter. Raw C
+callers remain responsible for valid inputs and CPython's interpreter
+contracts.
 
 #### Managing the thread context
 
@@ -157,7 +204,7 @@ state and other thread-local CPython state belong to the exact thread state.
 pub struct ThreadContext<'py> {
     ptr: NonNull<ffi::PyThreadState>,
     interpreter: InterpreterKey,
-    scope: NonNull<ScopeRecord>, // private, stable storage in the entry guard
+    entry: NonNull<EntryState>, // private, stable storage in the entry guard
     #[allow(clippy::type_complexity)]
     _marker: PhantomData<(fn(&'py ()) -> &'py (), *mut ())>,
 }
@@ -202,65 +249,79 @@ without borrowing this context. Checking only when a generated callback is
 entered is also insufficient: a detached Rust closure can call scoped TLS
 without crossing a generated C entry.
 
-CPython maintains a stack of Rust scope records per OS thread, shared across
-all extension libraries and all interpreters on that thread. A record is
-**available** while its context can be used, or **suspended** while a private
-wrapper holds the exclusive borrow and exposes no access to that context.
-At most one record is available on an OS thread. Nested entries are admitted
-only while all enclosing records are suspended; they create a fresh scope
-for the state actually attached at that entry. Scope depth on an individual
-`PyThreadState` is insufficient when C code switches interpreters.
+CPython keeps a private thread-local flag on each OS thread recording whether
+a Rust context is **available** there, shared across all extension libraries
+and all interpreters on that thread. A context is **suspended** while a
+private wrapper holds its exclusive borrow and exposes no access to it. At
+most one context is available on an OS thread, so one flag is enough, and
+CPython keeps no stack of scope records. Nesting follows the machine stack
+instead: entry and restoration guards are lexically scoped and cannot be
+forgotten, and nested entries are admitted only while the flag is clear, so
+each transition below knows the flag's previous value. Nested entries create a
+fresh scope for the state actually attached at that entry.
+
+The flag lives in CPython rather than in a Rust `thread_local!` because each
+extension links its own copy of the Rust support crate. Only the owning thread
+reads or writes it, since attach, detach, and swap act on the calling thread,
+so it needs no atomic access. It is per OS thread rather than per
+`PyThreadState`, so the gates can consult it whichever state, if any, is
+attached.
+
+Each `PyThreadState` also gets an atomic Rust protection count. An entry
+increments the count of the state attached at entry and decrements it only at
+exit, so a suspended entry still protects its state. Release consumers do the
+same while they hold a batch. The count is atomic because deletion can run on
+another OS thread.
 
 The required private operations have these contracts; their names and C
 layout are implementation details:
 
-1. **Enter:** verify the actual attached state and execution phase, acquire
-   or reuse interpreter lifetime protection, and register an available record
-   in stable, private stack storage. Entry cannot publish a context before
-   all these steps succeed. A per-interpreter lease does not by itself keep
-   an individual thread state alive: a registered entry also protects its
-   exact state from deletion until restoration and exit.
-2. **Suspend:** while holding `&mut ThreadContext`, mark its record suspended
-   before invoking a potentially reentrant operation. Native preflight checks
-   leave attachment and registration unchanged on refusal and do not create
-   a Python exception. No arbitrary callback occurs between preflight and
-   committing suspension. The private restoration guard retains the exact
-   original state, record, and lifetime protection.
-   Suspension removes access to the Rust capability; it does not broaden
-   the C operations permitted by the execution phase. Cleanup authorization
-   and its transition restrictions remain in force.
+1. **Enter:** require the flag to be clear. Verify the actual attached state
+   and execution phase, acquire interpreter lifetime protection, and increment
+   the attached state's protection count. Only then set the flag and publish
+   the context; entry cannot publish a context before all these steps succeed.
+   A per-interpreter lease does not by itself keep an individual thread state
+   alive; the protection count does, until restoration and exit.
+2. **Suspend:** while holding `&mut ThreadContext`, clear the flag before
+   invoking a potentially reentrant operation. Native preflight checks leave
+   attachment and the flag unchanged on refusal and do not create a Python
+   exception. No arbitrary callback occurs between preflight and committing
+   suspension. The private restoration guard retains the exact original state
+   and lifetime protection. Suspension removes access to the Rust capability;
+   it does not broaden the C operations permitted by the execution phase.
+   Cleanup authorization and its transition restrictions remain in force.
 3. **Transition:** CPython's attach, detach, swap, and thread-state deletion
-   paths reject any transition that invalidates an available record. They
-   consult the OS-thread registration even when there is currently no
-   attached state, and cover both public and internal transition paths.
-   Deletion additionally respects every live thread-state protection,
-   including suspended records and active consumers, even when attempted
-   from another OS thread. The deleting thread's own scope stack is not
-   sufficient. Destruction cannot synchronously wait for a protected entry
-   on its own call stack to finish.
-4. **Resume:** require nested records to have exited and the exact original
-   state to be attached before making the outer record available again.
-   Restore it on normal return and Rust unwind according to the operation's
-   audited contract. If a foreign call violates its restoration contract,
-   fail without exposing a stale context; do not silently attach over an
-   unknown state. Failure to restore safely is fatal.
-5. **Exit:** after author code and scoped handles are finished, mark the
-   record unavailable and service or transfer its releases while retaining
-   the sink, ancestry, and lifetime protection for reentrant cleanup. Remove
-   the record only after its sink is empty. Cleanup and panic reporting
-   precede release of lifetime and thread-state protection.
+   paths reject any transition while the flag is set. They consult the flag
+   even when there is currently no attached state, and cover both public and
+   internal transition paths. Deletion additionally rejects a state whose
+   protection count is nonzero, even when attempted from another OS thread;
+   this covers suspended entries and active consumers, which the deleting
+   thread's own flag cannot see. Destruction cannot synchronously wait for a
+   protected entry on its own call stack to finish.
+4. **Resume:** nested entries have already exited, because they run inside the
+   suspended call. Require the flag to be clear and the exact original state
+   to be attached, then set the flag again. Restore the original state on
+   normal return and Rust unwind according to the operation's audited
+   contract. If a foreign call violates its restoration contract, fail without
+   exposing a stale context; do not silently attach over an unknown state.
+   Failure to restore safely is fatal.
+5. **Exit:** after author code and scoped handles are finished, clear the
+   flag, then service or transfer the entry's releases while retaining the
+   sink and lifetime protection for reentrant cleanup. Retire the sink only
+   after it is empty. Cleanup and panic reporting precede decrementing the
+   state's protection count and releasing the lease.
 
-Registration and restoration guards are private and cannot be returned or
-forgotten by safe author code. Forgetting a public handle may leak a reference
-but cannot remove attachment protection or strand a suspended registration.
-Stable record addresses are established before registration, without requiring
-an allocation for each entry. The entry guard, rather than the public context,
-owns the record and its associated release sink.
+Entry and restoration guards are private and cannot be returned or forgotten
+by safe author code; the single flag depends on this. Forgetting a public
+handle may leak a reference but cannot clear the flag, remove attachment
+protection, or strand a suspended context. The entry guard, rather than the
+public context, owns the release sink and the entry's private state, at a
+stable address established without an allocation for each entry.
 
 A controlled Rust wrapper checks detachment permission before calling
 `PyEval_SaveThread`, so that C API needs no new recoverable failure result
-for this path. Legacy C transitions that bypass the protocol while an
-available record exists must fail-stop before changing attachment; silently
+for this path. Legacy C transitions that bypass the protocol while the
+flag is set must fail-stop before changing attachment; silently
 continuing would invalidate safe Rust's proof, and waiting on the same thread
 would deadlock. A new private checked transition API may return a native
 status instead. Scope-entry protocol violations likewise fail before exposing
@@ -275,12 +336,27 @@ access during that interval. Otherwise it must use suspension. This audit
 includes free-threaded safepoints and object critical sections, not only
 `Py_BEGIN_ALLOW_THREADS`.
 
+Implement that exception with a private balanced-parking transition or
+private transition reason. The current parking lot calls public
+`PyEval_ReleaseThread` and `PyEval_AcquireThread`, so gating public functions
+alone does not distinguish explicit detachment from internal parking. The
+exemption must remain confined to audited paths that restore the same state
+before any callback or Rust access; an arbitrary C caller cannot request it.
+Lock paths that handle signals by calling `Py_MakePendingCalls` require the
+exclusive-call protocol instead. No exemption permits deletion of protected
+states or bypasses interpreter lifetime protection.
+
+Placed beside CPython's existing thread-local current-state pointer, the flag
+makes the common gate one load and branch; deletion adds a load of the state's
+count. Transition hooks also affect non-Rust code. Benchmark them on ordinary
+C and Python workloads rather than assuming zero overhead.
+
 Entry uses a higher-ranked closure so callers cannot choose `'py = 'static`
 or return a scoped value. Its conceptual private signature is:
 
 ```rust
 // SAFETY: only generated C callbacks with an attached state and valid inputs
-// may enter; the implementation performs registration and lifetime admission.
+// may enter; the implementation performs scope entry and lifetime admission.
 unsafe fn with_current<R>(
     f: impl for<'py> FnOnce(&mut ThreadContext<'py>) -> R,
 ) -> Result<R, EntryError>;
@@ -309,6 +385,11 @@ impl<'py> ThreadContext<'py> {
         f: impl FnOnce() -> R,
     ) -> Result<R, DetachError>;
 
+    pub fn detach_if_possible<R>(
+        &mut self,
+        f: impl FnOnce() -> R,
+    ) -> R;
+
     pub fn interop<R>(
         &mut self,
         f: impl FnOnce() -> R,
@@ -318,9 +399,9 @@ impl<'py> ThreadContext<'py> {
 }
 ```
 
-`detach` checks the execution phase, suspends the record, calls
+`detach` checks the execution phase, suspends the context, calls
 `PyEval_SaveThread` or its private equivalent, executes `f` on the same OS
-thread, and restores the saved state before resuming the record. Its private
+thread, and restores the saved state before resuming the context. Its private
 guard does the same restoration if `f` panics. The interpreter lease and
 thread-state protection span the entire detached interval. A refusal returns
 a native `DetachError` before detaching; a caller can subsequently translate
@@ -328,7 +409,25 @@ it through an available context. Cleanup entries refuse explicit detachment.
 There is no outermost-entry permit: a normal nested callback may detach when
 all enclosing contexts are suspended and it has lifetime protection.
 
-`interop` suspends the record without initially detaching. Its closure can
+`detach_if_possible` makes the fallback explicit: detach when the execution
+phase permits, otherwise run `f` while remaining attached. It invokes `f`
+exactly once, on the same OS thread, and returns its result unchanged. Only a
+legitimate phase restriction selects the attached path; a broken attachment
+or scope invariant remains fatal. The exclusive borrow, suspension
+around the closure, lifetime protection, and restoration on unwind apply to
+both paths. An attached fallback does not grant cleanup code permission for
+otherwise forbidden foreign transitions, and does not suppress closure
+errors or panics.
+
+Callers of the fallback operation must tolerate execution while attached.
+Straightforward compression or encoding is a suitable use after auditing
+its dependencies. A closure that waits for another thread needing Python
+progress should use strict `detach` and handle refusal before waiting.
+Attached waits can deadlock through the GIL or free-threaded stop-the-world
+coordination. The labels "computation" and "waiting" are guidance, not a
+type-level effect system; hidden waits and foreign callbacks still matter.
+
+`interop` suspends the context without initially detaching. Its closure can
 use a foreign safe wrapper that manages its own attachment, including
 switching interpreters. That wrapper must restore the incoming state before
 returning or unwinding; the boundary verifies exact restoration before
@@ -338,8 +437,8 @@ This boundary protects this API's contexts; it does not repair a foreign
 wrapper's own unsound attachment tokens or reference lifetimes. Foreign
 wrappers remain responsible for their capabilities and C API contracts.
 
-Neither closure receives the borrowed context. Neither needs `Send` bounds
-on its captures or result: both execute on the same thread, and the proof is
+None of these closures receives the borrowed context or needs `Send` bounds
+on its captures or result: they execute on the same thread, and the proof is
 exclusive access to the capability, not an assertion about captured values.
 Opaque scoped handles and independently safe Rust data may be moved into or
 returned from the closure. Accessing Python through a handle still requires
@@ -422,7 +521,7 @@ impl<T> Py<T> {
 
 Scoped operations accept the same invariant `'py` on all handles and the
 context, avoiding repeated dynamic identity checks. Leaf access also needs
-no repeated attachment check: entry registration and transition enforcement
+no repeated attachment check: the scope protocol and transition enforcement
 maintain that invariant until the next exclusive operation. To propagate a
 native mismatch through a Python callback, explicitly raise an exception on the
 current context; no error conversion implicitly consults ambient attachment.
@@ -483,8 +582,17 @@ A direct decref could invoke a finalizer which reenters Python or detaches
 while a shared context remains reachable through scoped TLS. Actual-attachment
 checks in `Drop` would not establish the exclusive borrow needed for that
 execution. `Bound::drop` instead appends to its entry's release sink; `Py::drop`
-submits by key, with an optional matching live sink fast path. Both transfer
+submits to its interpreter's queue by key. Both transfer
 ownership without reading the object's header or invoking Python.
+
+A sealed marker that guarantees an immortal singleton, such as a dedicated
+`None` or boolean marker, may omit release and queue submission entirely.
+This is a static guarantee that release is a no-op, not a detached read of
+the object's refcount. A general integer marker does not establish it merely
+because some small integers are immortal. Upcasting may discard the static
+knowledge and use the ordinary queue path; no extra immortality bit needs
+to survive in the handle. Interpreter association and binding checks remain
+unchanged, including for old singleton handles after reinitialization.
 
 Explicit release and queue draining preserve the incoming Python exception.
 Generated Rust deallocators contain panics and preserve exception state while
@@ -520,12 +628,21 @@ under the policy below. Acceptance includes insertion into an inline sink;
 later allocation failure cannot revoke it. No mutable borrow of sink storage
 or queue lock spans a callback.
 
-The sink remains valid through suspended contexts and Rust unwinding.
-`Py::drop` may use a CPython-owned OS-thread lookup of a live sink with the
-same generation key, including a suspended outer entry's sink, without
-inspecting Python memory. Otherwise it submits to the interpreter queue.
-This optimization carries the same admission and ownership guarantees as
-ordinary submission; a stale sink cannot survive entry exit. Entry exit
+**Sink aliasing invariant:** no exclusive Rust reference to sink storage may
+remain live across any operation that can drop a handle using that sink.
+Pushes use audited interior mutability. Draining extracts a batch using raw
+access or a completed short borrow before executing decrefs; the guard must
+not retain `&mut` access to the sink across reentry, even if queue locking
+would otherwise appear to serialize writes. Nested and unwinding drops must
+be tested against this invariant.
+
+The sink remains valid through suspended contexts and Rust unwinding. Only
+`Bound` handles reach it, through their direct pointer. There is no
+thread-wide sink lookup: `Py::drop` always submits to the interpreter queue,
+even inside an entry for the same interpreter. That costs a queue submission
+instead of an inline push, which should be uncommon because stored handles
+are mostly dropped at teardown; `drop_with` releases directly when prompt
+release matters. A stale sink cannot survive entry exit. Entry exit
 drains or transfers every buffered reference before retiring the sink. If
 transfer fails, it drains the retained entries under private release
 authorization and lifetime protection; it cannot abandon an accepted batch.
@@ -580,8 +697,22 @@ not an indefinitely retained Python handle. Notification must remain reliable
 when the ordinary pending-call queue is full: an accepted release cannot
 disappear merely because scheduling a wakeup failed.
 
+Use a dedicated release-work notification, such as an eval-breaker bit,
+instead of requiring a slot in the bounded pending-call array. The protocol
+must also wake a finalizing thread waiting on guards or producers when new
+release work needs servicing or the last in-flight producer finishes, and
+preserve the existing last-guard-release wakeup. An eval-breaker bit alone
+cannot wake an indefinitely parked native waiter. Notification paths retain
+endpoint protection until they finish accessing interpreter or thread-state
+storage; producer completion and its wakeup must also be coordinated with
+endpoint retirement. The wait predicate and wakeup protocol must prevent
+lost wakeups when either new work or completion races the finalizing thread's
+transition into its native wait. In particular, draining a producer's node
+does not imply that its notification and submission bookkeeping have finished.
+
 Before removing a normal batch, the consumer acquires one finalization lease
-for that batch or reuses an enclosing entry's protection. It retains this
+for that batch and increments its attached state's protection count;
+`ctx.drain_releases()` uses its entry's protection instead. It retains this
 protection through decrefs, reentrant callbacks, and batch cleanup, including
 any temporary detach inside a C deallocator. Shutdown accounts for these
 active consumers as well as producers: an empty queue does not prove that a
@@ -615,19 +746,26 @@ should expose an explicit close operation with a context.
 Shutdown uses the following admission protocol:
 
 1. While open, the queue accepts references and can be drained normally.
-2. Finalization closes admission of new external Rust-entry leases and lets
-   existing entries and admitted normal consumers, including their
-   detach/reattach operations and nested callbacks, finish while the
-   interpreter is intact. It continues servicing releases under cleanup
-   authorization, releasing its GIL and any locks needed by those entries
-   while waiting. New normal consumer leases use the same closed gate.
-3. Queue admission closes atomically against producers. Already admitted
-   submissions finish and all accepted references are drained while the
-   interpreter can still execute deallocators. Waiting and
-   decrefing occur without registry/queue locks and without keeping the world
-   stopped across work that may need another thread. This must integrate
-   with `Python/pylifecycle.c`'s pre-finalization loop, not be inserted after
-   that loop returns holding its pending-call lock with the world stopped.
+2. The pre-finalization loop lets protected entries and normal consumers,
+   including detach/reattach and nested callbacks, finish while the
+   interpreter is intact. It continues servicing releases while waiting,
+   releasing its GIL and any locks needed by those entries. Entry-local sinks
+   and removed batches remain covered by their leases until drained or
+   transferred; an empty interpreter queue does not account for them alone.
+3. Coordinate closing queue admission against detached producers with the
+   existing finalization-guard barrier. The loop's final completion check
+   includes queued releases and in-flight submissions, in addition to the
+   existing thread, pending-call, and guard conditions. A submission racing
+   that check either remains accounted for and causes another drain cycle,
+   or is rejected by closed admission. One implementation closes admission
+   in the same synchronized final check as guard admission; another may
+   close the queue earlier and finish all admitted submissions before that
+   check. No check-then-enqueue gap is permitted. Waiting and decrefing occur
+   after restarting the world and releasing incompatible locks. Integrate
+   this with `make_pre_finalization_calls`, rather than adding a drain after
+   it returns with the world stopped and its pending-call lock held. Once
+   guard admission closes, new normal entries and consumers cannot enter;
+   subsequent drains require cleanup authorization.
 4. Authorized finalization callbacks still enqueue their ordinary drops into
    a cleanup sink. After external admission closes, CPython accepts this
    sink's releases only under the finalizing thread's private cleanup
@@ -665,15 +803,20 @@ finalizer timing even on attached threads, and batching may retain memory
 longer. Benchmark the inline path, overflow, and unbound `Py` submissions;
 there is no claim that queuing every implicit drop is free.
 
-On platforms supporting `fork`, the registry, sinks, scope records, and
-lease counts must participate in CPython's before/after-fork protocol.
-Detached producers must be quiesced or synchronized by that protocol;
-stopping attached Python threads alone is insufficient. The child must
-reinitialize native synchronization, preserve accepted releases for surviving
-interpreters, remove counts and records from vanished threads, and retire
-endpoints for interpreters removed after fork. Records and restoration guards
-on the surviving thread remain valid. Fork preparation cannot wait while
-holding a lock that a paused producer needs. The queue is not ready for
+On platforms supporting `fork`, the registry, sinks, availability flag,
+thread-state protection counts, and lease counts must participate in CPython's
+before/after-fork protocol. Detached producers must be quiesced or
+synchronized by that protocol; stopping attached Python threads alone is
+insufficient. The child must reinitialize native synchronization, preserve
+accepted releases for surviving interpreters, remove the leases held by
+vanished threads, clear their states' protection counts before deleting those
+states, and retire endpoints for interpreters removed after fork. The
+surviving thread's leases can be recovered from its own states' protection
+counts, because each protected entry or consumer holds one lease on its
+state's interpreter; cleanup-authorized entries hold none, so fork under
+cleanup authorization must be refused or accounted for separately. The
+surviving thread's flag and guards remain valid. Fork preparation cannot wait
+while holding a lock that a paused producer needs. The queue is not ready for
 general use until these child and parent paths are defined and tested.
 
 
@@ -789,6 +932,10 @@ without reading those bytes or exposing them to Python. Initialization runs
 under the exclusive-call protocol, with no context passed to the closure;
 restoration and cleanup must also work when it panics. Even for zero length,
 an implementation must not lend mutable access to a shared bytes singleton.
+The closure can still call a foreign Python wrapper or run arbitrary
+destructors. Suspension permits that reentry while making the outer context
+inaccessible; exclusive ownership of the unpublished bytes separately
+protects the mutable slice.
 
 The other initial abstractions are deliberately small. `Bound<PyModule>` can
 add converted values and type objects, while `PyType::new_exception` creates
@@ -858,12 +1005,13 @@ no incref and introduces no input copy:
 
 ```rust
 let input = data.as_bytes(ctx);
-let output = ctx.detach(|| compress_without_python(input))
-    .map_err(|err| err.raise(ctx))?;
+let output = ctx.detach_if_possible(|| compress_without_python(input));
 ```
 
 A slice into writable or externally mutable buffer storage cannot use this
 proof. Such exporters require the separate buffer design in the appendix.
+This example's CPU work must also be valid while attached; calls requiring
+actual detachment use strict `detach` and handle its native refusal.
 
 Generic implementations compose. `Option<T>` maps `None`, borrowed handles can
 be promoted with an incref, and an existing `Bound<T>` can be returned without
@@ -976,7 +1124,12 @@ impl<T> GcSlot<T> {
         &self,
         ctx: &mut ThreadContext<'py>,
         value: Option<Bound<'py, T>>,
-    ) -> Result<Option<Bound<'py, T>>, GcSlotError>;
+    ) -> Result<Option<Bound<'py, T>>, GcSlotReplaceError<'py, T>>;
+}
+
+pub struct GcSlotReplaceError<'py, T> {
+    pub kind: GcSlotError,
+    pub value: Option<Bound<'py, T>>,
 }
 ```
 
@@ -986,8 +1139,10 @@ thread; any suspension occurs before acquiring slot protection. Both check
 the slot's key before accessing its object pointer.
 `replace` also binds the incoming value to the same scope through its type.
 Its native `GcSlotError` distinguishes interpreter mismatch from a cleared
-slot; either error leaves the slot unchanged and drops the supplied value by
-the ordinary release policy. `get` returns `None` for a cleared slot after
+slot. Either error leaves the slot unchanged and returns the supplied value
+inside `GcSlotReplaceError`, preserving ownership without allocation, incref,
+or enqueue. The caller can recover it, or drop the error to use the ordinary
+release policy. `get` returns `None` for a cleared slot after
 checking identity. On success `replace` returns ownership of the removed
 reference, so its decref occurs after releasing internal synchronization.
 `get` acquires its returned strong reference while the slot contents are
@@ -1009,15 +1164,37 @@ during visits, partial-clear validity, and nonblocking traversal.
 `GcSlot` clearing uses shared access and synchronized removal, never a Rust
 `&mut S` across a decref. Its private implementation must let traversal visit
 a live, correctly accounted reference throughout each `visitproc` call even
-when another thread could otherwise mutate or clear the slot. Traversal may
-rely on CPython's GIL or stop-the-world exclusion only after auditing every
-supported traversal caller and ensuring slot mutations participate in that
-exclusion. It must not block or invoke Python to acquire protection, expose
-an unsynchronized `&Py<T>`, or hold a lock across decref. Atomic pointer loads
-alone do not prove these requirements. Removed references are released only
-after the slot is empty and closed and its internal protection has been
-exited; clearing an already closed slot is a no-op. Ordinary replacement with
-`None` merely empties a slot and does not close it. Reentrant traversal
+when another thread could otherwise mutate or clear the slot. The initial
+implementation uses the following exclusion contract:
+
+- Published slot access and mutation require attachment. Waiters park
+  outside slot protection; a holder never parks, reaches a safepoint, runs
+  callbacks, or releases attachment while protected. This includes failure
+  and cleanup paths. Slot protection cannot be borrowed by author code.
+- Normal GC traversal, `gc.get_referents`, and `gc.get_referrers` have GIL or
+  stop-the-world exclusion. Stopping attached mutators therefore cannot
+  leave a partially modified slot. `tp_clear` runs after the free-threaded
+  collector restarts the world and uses the synchronized mutation path.
+- Debug `PyObject_GC_Track` can invoke traversal without stopping the world.
+  Generated factories cover that case by fully initializing and retaining
+  exclusive access to the unpublished object until tracking returns.
+
+Under this full exclusion and publication proof, traversal can load the
+slot pointer without taking its lock. Atomic loads alone would not establish
+the same reference-lifetime guarantee. Traversal must not block, run Python,
+expose an unsynchronized `&Py<T>`, or retain an incompatible exclusive Rust
+borrow during a visit. Type/module lookups in traversal use the appropriate
+`_DuringGC` accessors, which do not create owned references or Python errors.
+Their native failure results must still be handled.
+
+External C callers invoking `tp_traverse` directly must provide equivalent
+exclusion and valid, initialized inputs; arbitrary concurrent traversal of
+mutable payloads is outside this unsafe FFI contract. New in-tree traversal
+callers must be audited against the same two cases. References removed by clear
+are released only after the slot is empty and closed and its internal
+protection has been exited; clearing an already closed slot is a no-op.
+Ordinary replacement with `None` merely empties a slot and does not close it.
+Reentrant traversal
 therefore sees valid shared state. Any supported container needs the same
 proof before a sealed implementation is added.
 
@@ -1051,6 +1228,12 @@ type ModuleExec<S> = for<'a, 'py> fn(
 Non-panicking guards apply failure phases during unwinding. Stores that
 publish an initialized value or completed transition use release ordering;
 dependent reads use acquire ordering.
+
+`Ready` is an intentional readiness boundary for ordinary state access.
+`S` already exists in `Executing`, but the exec hook may still be populating
+its logical state. Permitting exec-time callbacks to read it is a possible
+API extension, provided those methods handle incomplete setup explicitly;
+Rust initialization alone does not require or forbid that policy.
 
 Unreachability alone does not justify an exclusive Rust payload borrow:
 decref may reenter traversal and free-threaded access needs synchronization.
@@ -1166,7 +1349,7 @@ through the ordinary error path, with the context available again. A fixed
 message does not make reporting allocation-free or callback-free: exception
 creation can allocate, and replacing an exception can run finalizers.
 
-Mandatory registration, restoration, and lifecycle guards must not unwind.
+Mandatory entry, restoration, and lifecycle guards must not unwind.
 A panic already in flight restores attachment before the inner catch receives
 it. The outer catch is a last-resort fatal boundary, not the normal path for
 reporting author panics. Cleanup drain failures and inability to maintain the
@@ -1188,11 +1371,12 @@ Before `drop_in_place<C>`, deallocation commits the destroyed phase and
 installs guards for the Python allocation and heap-type reference. A panic
 therefore cannot cause a second Rust drop or skip mandatory cleanup. Module
 state uses the same pattern. Generated lifecycle glue holds exclusive context
-access and suspends the record around arbitrary payload/state destructors
+access and suspends the context around arbitrary payload/state destructors
 and any C cleanup that may reenter. These destructors receive no context, so
 they cannot be responsible for calling `ctx.interop` themselves. Restore the
-exact state and resume the context before reporting a panic. The record,
-release sink, and lifetime protection remain live throughout this cleanup.
+exact state and resume the context before reporting a panic. The entry's
+release sink, lifetime protection, and state protection remain live
+throughout this cleanup.
 
 During finalization, the same suspension preserves cleanup-phase restrictions;
 it does not authorize unrestricted foreign interoperation. Only transitions
@@ -1272,6 +1456,13 @@ documented guarantee are rejected before allocation. The allocation records
 initialization, clear, and drop phases so callbacks never read uninitialized
 or destroyed `C`.
 
+Generated instance allocation uses `_PyType_AllocNoTrack`, writes valid Rust
+phase metadata and the payload, and calls `PyObject_GC_Track` only after
+traversal can safely read them. `PyType_GenericAlloc` already tracks GC
+objects and therefore does not implement this sequence. Keep the instance
+unpublished until tracking and its possible debug traversal finish; zeroed
+allocation bytes alone do not make arbitrary Rust values initialized.
+
 `ClassDef<C>::create(ctx, ModuleRef<C::State>)` combines static slots with the
 runtime module pointer in the same invariant scope and returns
 `Bound<PyType<C>>`. It verifies the unique `C::definition()`; a second static
@@ -1292,8 +1483,9 @@ and entry lifetimes.
 Rust structs in classes must be `Send + Sync + 'static`. Python methods receive only `&self`,
 never `&mut self`, because aliases can call the same object concurrently in a
 free-threaded interpreter. Mutable payload state therefore requires interior
-mutability. The rules for a blocking interpreter-aware lock remain an open
-decision listed in the appendix; an ordinary `Mutex` must not be presented as
+mutability. The appendix describes a `PyLock` prototype with an exclusive
+context loan and guarded detachment. Its reentry, panic-recovery, and output
+buffer policies remain open; an ordinary `Mutex` must not be presented as
 the general solution until those rules are settled.
 
 
@@ -1382,7 +1574,7 @@ its support declarations:
   directly or through scoped TLS while that context is exclusively borrowed.
   Include attachment-dependent views held across detach, protocol calls,
   explicit decref, and release drains. Compile-pass cases must allow opaque
-  handles and non-`Send` Rust captures/results in same-thread `detach`, and
+  handles and non-`Send` Rust captures/results in both detachment variants, and
   exact immutable bytes views whose owner and entry outlive detachment.
 - Regressions modeled on PyO3 #2141 and #3640: `SendWrapper`, a capture-free
   function reading scoped TLS, and dynamic exclusive TLS/`RefCell` borrowing.
@@ -1393,14 +1585,25 @@ its support declarations:
   including a TLS hook holding A's values. Repeat with a different thread
   state in A. Old contexts stay inaccessible; callback scopes use the actual
   state, and return/unwind restores the exact outer state. An extensible
-  conversion trait must receive an available context, not one whose record
-  was suspended around the whole trait invocation.
+  conversion trait must receive an available context, not one that was
+  suspended around the whole trait invocation.
 - Cooperating foreign wrappers under `interop`, allowed nested detachment,
-  and native preflight refusal with unchanged registration and attachment.
+  and native preflight refusal with the flag and attachment unchanged.
   Subprocess tests for uncooperative public and internal detach/swap calls
   must fail before invalidating an available context. Include direct Rust TLS
   access from the detached closure, without a generated callback entry.
-  Forgetting public handles must not affect registration or lease ownership.
+  Forgetting public handles must not affect the flag or lease ownership.
+- Strict `detach` refusal must not run its closure. `detach_if_possible`
+  must run it exactly once on either the detached path or the attached
+  fallback, preserve its return value or panic, and restore the exact state.
+  Include cleanup-phase fallback, permitted nested callbacks, and rejection
+  of forbidden foreign transitions from the closure; fallback does not grant
+  additional cleanup permissions.
+- Contended `PyMutex` and critical-section parking must use the audited
+  internal transition path without rejecting a valid leaf operation. Paths
+  that handle signals or pending calls must use exclusive access. Verify
+  exact restoration, no callbacks during exempt parking, and lifetime
+  protection throughout; public release calls cannot claim the exemption.
 - Two simultaneous subinterpreters, including separate-GIL configurations:
   distinct module state, runtime classes, and exceptions; checked binding,
   conversion, explicit destruction, and traced-field publication/mutation
@@ -1410,13 +1613,19 @@ its support declarations:
   pointer equality or immortality does not permit relabeling a stored handle.
   Interpreter destruction and runtime reinitialization cannot revive old
   keys, even if allocator addresses or public interpreter IDs are reused.
+  Include an old interpreter view resolved after ID reuse, and static
+  singleton drop elision before and after an upcast loses that knowledge.
 - Attached, detached, wrong-interpreter, and unwinding drops: one ownership
   transfer and at most one decref per handle, correct interpreter on release,
   and preservation of any pending exception. Include TLS/native-thread drops
   after finalization and `Py::drop_with` mismatch behavior. An implicit drop
   while a shared context is exposed must never run a finalizer synchronously.
-  Exercise inline sink overflow, nested scopes, and suspended outer sinks;
-  no node or lookup may retain a pointer to a retired entry.
+  Exercise inline sink overflow and nested scopes, including a `Py` drop
+  inside a nested entry, which must use the interpreter queue; no queue node
+  may retain a pointer to a retired entry.
+  Exercise the sink aliasing invariant with reentrant and unwinding drops
+  during a batch drain, including Rust aliasing checks where the harness
+  supports them.
 - Fault-injected queue allocation failure, full ordinary pending-call queues,
   and admission/notification races with shutdown: accepted requests drain
   before teardown; rejected requests neither dereference nor decref objects.
@@ -1427,11 +1636,27 @@ its support declarations:
   of queued drops from module/type teardown after the first final drain.
   Include an active consumer with an empty queue whose C deallocator detaches:
   its batch and interpreter must remain protected until draining completes.
+  A finalizing thread waiting for outstanding guards must wake and service
+  new releases, including submissions racing entry into its native wait.
+  Also pause a producer after its node is drained but before its submission
+  bookkeeping finishes: producer completion must wake the waiting finalizer.
+  Cover completion racing entry into the wait and retain last-guard wakeup
+  coverage.
 - Shutdown racing with an active detached Rust scope: its state remains live
   through reattachment; cleanup reentries after normal admission closes work
   and cannot request explicit detach. Test audited internal temporary detach
   during cleanup as well. Repeat cross-extension reentry with two `cdylib`s
-  to verify CPython-owned OS-thread registrations and lifetime bookkeeping.
+  to verify the CPython-owned flag and lifetime bookkeeping. Nested entries
+  must still acquire their own leases while a finalizing thread waits for the
+  guard count to reach zero. Deleting a protected thread state from another
+  OS thread must be rejected, including a state protected only by a
+  suspended entry.
+- A scoped native worker holds `&S` or `&C` while its entry thread blocks in
+  a Python callback that detaches internally, without calling Rust `detach`
+  or `interop`. Finalization must wait and the borrowed storage must remain
+  valid. Use barriers to establish that ordering, then unblock the callback
+  and worker and verify shutdown completes. Include free-threaded deferred
+  module/function roots; a timeout-only hang test is insufficient.
 - Panic during detachment, parsing, conversion, and payload destruction:
   exact attachment is restored, the entry lease survives panic reporting,
   and a second panic or failed restoration cannot cross the C ABI. Include
@@ -1440,12 +1665,23 @@ its support declarations:
   same-interpreter state transfer works and foreign errors are rejected.
 - Fork with queued references and paused detached producers, including
   surviving-thread scope restoration and child-side interpreter deletion:
-  no inherited lock, orphaned in-flight count, or stale scope record prevents
-  progress or allows access to a removed interpreter.
+  no inherited lock, stale flag, or orphaned in-flight, lease, or protection
+  count prevents progress or allows access to a removed interpreter.
 - Concurrent GC-slot reads, replacement, traversal, and clear: returned owned
   references remain live, foreign slots cannot be published, reentrant visits
   never overlap an exclusive payload borrow, closed slots reject replacement,
   and heap-type/module cycles are collected even for Rust-only payloads.
+  Failed `replace` must return the identical incoming ownership without an
+  incref or queued release until the caller drops it. Cover both stopped-world
+  traversal and debug tracking of a fully initialized unpublished instance.
+
+Before adopting the `PyLock` prototype, add compile-fail coverage for a second
+acquisition through the borrowed context and for using `guard.ctx()` across
+guarded detachment. Test detached mutation, unwind restoration, cross-thread
+exclusion, and the selected fresh-context recursive-acquisition policy.
+Forgetting a guard may leave a locked mutex, but cannot leave stale scope
+bookkeeping. Test partial-failure recovery independently of poisoning and
+keep GC-visible Python edges outside unsupported lock storage.
 
 Run the relevant runtime cases on GIL and free-threaded builds. Also verify
 that shared Rust payload references cannot expose unsynchronized interior
@@ -1455,17 +1691,22 @@ Measure leaf access, unbound binding, outermost and nested entry, exclusive
 call suspension/resumption, GC-slot access, explicit decref, inline scoped
 drops, and interpreter-queue overflow against equivalent C operations.
 Include contention, tiny frequent callbacks, compression throughput, and
-retained-memory measurements. The intended cost distribution is:
+retained-memory measurements. Measure transition-hook overhead on Python/C
+workloads that never enter Rust, both detached and attached fallback CPU work,
+and any full-output copy against the current `PyBytesWriter` path. The intended
+cost distribution is:
 
 - Attachment and phase checks at scope entry and transition boundaries,
   with no repeated TLS validation for consecutive leaf operations.
-- Per-OS-thread registration changes around potentially reentrant calls;
-  no global registry lookup or allocation on the ordinary suspension path.
+- A thread-local flag write around potentially reentrant calls; no global
+  registry lookup, atomic operation, or allocation on the ordinary suspension
+  path.
 - Key comparisons at unbound-handle and traced-field publication boundaries,
-  and finalization admission bookkeeping at protected entry boundaries.
+  and lease admission plus a protection count update at every entry, nested
+  entries included.
 - Inline enqueue for ordinary scoped drops, batched decref, and native queue
-  synchronization/allocation on overflow or unbound submissions without a
-  matching sink. Explicit release avoids that queue traffic.
+  synchronization/allocation on overflow and for every `Py` drop. Explicit
+  release avoids that queue traffic.
 - Refcount traffic for mutable GC-slot reads; no copy for exact immutable
   bytes input or fresh allocation merely to capture an existing C exception.
 
@@ -1498,9 +1739,19 @@ The following items are intentionally kept out of the normative API sections:
   initial zero-copy input path under a narrower ownership contract.
 - **Interpreter-aware locking.** The design must either provide a lock which
   cooperates with attachment, the GIL, and free-threaded stop-the-world pauses,
-  or prohibit blocking, detaching, calling Python, and reaching safepoints
-  while an ordinary Rust lock guard is held. Poisoning and traversal behavior
-  also require an explicit policy.
+  or constrain lock use to separately audited patterns, such as acquiring
+  a Rust-only lock inside a detached computation. The prototype below covers
+  another useful pattern but does not settle all locking policy.
+- **Shutdown progress and module migration.** Per-entry leases intentionally
+  make shutdown wait for live Rust borrows and accepted entry-local releases.
+  A daemon thread blocked in a Python callback beneath a Rust entry can
+  therefore delay shutdown indefinitely. Modules that routinely invoke user
+  callbacks, such as a future Rust `functools` or `itertools`, need an explicit
+  migration decision about that behavior. Compute-oriented modules have less
+  routine exposure, but even `zlib` argument conversion can invoke an
+  arbitrarily blocking `__index__`; "short protocol hook" is not a lifetime
+  or progress guarantee. Restricting a future entry mode to opaque handles
+  would require a separate API proof and cannot weaken the current lease rule.
 - **Additional GC containers.** Each container must prove interpreter
   association at publication and mutation, correct edge accounting, safe
   concurrent traversal/clear, and nonblocking visitor access before gaining a
@@ -1513,3 +1764,73 @@ The following items are intentionally kept out of the normative API sections:
   cleanup, and report errors. A `panic=abort` build remains ABI-safe but cannot
   provide that recovery behavior. Any future `no_std` configuration must use
   panic-abort or provide another complete no-unwind boundary.
+
+#### Interpreter-aware locking prototype
+
+This is a candidate interface for Rust-only mutable payload state, not yet
+a supported traced-field container or a completed locking API:
+
+```rust
+impl<T> PyLock<T> {
+    pub fn lock<'g, 'py>(
+        &'g self,
+        ctx: &'g mut ThreadContext<'py>,
+    ) -> Guard<'g, 'py, T>;
+}
+
+impl<'g, 'py, T> Guard<'g, 'py, T> {
+    pub fn ctx(&self) -> &ThreadContext<'py>;
+
+    pub fn detach<R>(
+        &mut self,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, DetachError>;
+}
+```
+
+Acquisition uses an audited `PyMutex` wait that parks detached without
+dispatching pending calls. The exclusive context loan lasts until the guard
+ends, so a second acquisition through that same context is a compile error.
+`ctx()` permits shared leaf access only; a live borrow of its result prevents
+an overlapping `Guard::detach` call. The guard remains `!Send + !Sync`.
+The lock's cross-thread `Send`/`Sync` implementations require `T: Send` and
+an audited synchronized representation, as for a mutex.
+
+`Guard::detach` lends `&mut T` to its closure while retaining the native
+mutex for the entire call. It uses strict detachment and reports phase
+refusal before running the closure. The mutable borrow cannot escape in
+`R`. Private guards restore the exact thread state and availability flag
+on return or panic independently of the public guard's eventual destruction.
+The native lock must never be automatically released by a CPython critical
+section or parking mechanism while any Rust reference to its protected data
+is live; otherwise another caller could obtain overlapping mutable access.
+
+This prevents exclusive Python operations through the original context,
+not every possible Python call while locked. The detached closure can use a
+foreign wrapper to attach and invoke a generated callback with a fresh
+context. That callback can attempt the same lock and deadlock, despite obeying
+all scope brands. The API must choose and document ordinary nonrecursive
+mutex behavior or native recursive-acquisition detection and an error result.
+Lock ordering and cross-lock cycles remain separate progress concerns.
+
+The initial GC field policy does not accept Python edges hidden behind this
+lock: traversal cannot acquire it or alias a live `&mut T`. Any future traced
+lock container needs its own publication, traversal, and clear proof. A panic
+may leave application state inconsistent, so a recovery or invalid-state
+policy is required. Poisoning can aid recovery but cannot be the basis of
+memory safety; payload methods and destructors must remain safe after partial
+failure. Safe `mem::forget(guard)` may leave the mutex permanently locked and
+end the Rust context loan. It must not leave the availability flag stale
+or make restoration or interpreter lifetime protection depend on its drop.
+
+For `zlib`, this interface can hold a stream lock across detached compression,
+but output growth must also fit the context rules. One candidate grows a
+Rust-owned output buffer inside a single detached closure, unlocks, and then
+copies into Python bytes. The current C `_BlocksOutputBuffer` delegates to
+`PyBytesWriter`, whose finish operation can return its existing bytes object
+after any needed resize. It does not always perform a final block-joining
+copy. The Rust-buffer candidate can therefore add a full-output copy and
+increase peak memory. Benchmark it against the current writer before choosing
+it; an audited unpublished-output abstraction may offer another approach.
+The prototype is not sufficient grounds to claim C-equivalent performance
+or enable the first full `zlib` migration.
