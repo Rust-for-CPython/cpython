@@ -1228,10 +1228,24 @@ fixed stack array and allocation-free keyword matching, yielding
 `Borrowed<'args, 'py, PyAny>` slots with no refcount churn. Constructor
 tuple/dict parsing fills the same slots.
 
-The glue checks its own inputs: a `ParamSpec`/slot-count mismatch is a
-checked error, `kwnames` must be a tuple, and constructor keyword values are
-borrowed from a private tuple, because a list could be cleared through
-`gc.get_objects()` during extraction. Argument errors raise `TypeError`.
+The glue checks its own inputs and keeps every argument alive while it is
+in use:
+
+- A `ParamSpec`/slot-count mismatch is a checked error.
+- `kwnames` must be a tuple before its entries are read.
+- Constructor keyword values are never borrowed from the `kwargs` dict.
+  Converting one argument can run Python code, such as `__index__`, that
+  removes another value from the dict, which would free a borrowed value.
+  Before converting any argument, the parser takes its own references to
+  every keyword value, and it keeps them until the call and result
+  conversion finish. It stores them in a private tuple rather than a list,
+  because Python code can find a list through `gc.get_objects()` and clear
+  it.
+- Positional arguments and vectorcall arrays can be borrowed without a
+  copy: the caller keeps them alive for the whole call, and Python code
+  cannot modify them.
+
+Argument errors raise `TypeError`.
 
 ## Testing
 
