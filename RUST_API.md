@@ -372,9 +372,11 @@ impl<'py> ThreadContext<'py> {
   deadlock through the GIL or stop-the-world.
 - **`interop`** suspends without detaching, so `f` can use a foreign safe
   wrapper that manages its own attachment, including switching
-  interpreters. The boundary verifies the incoming state was restored.
-  Cleanup entries refuse it. It does not repair a foreign wrapper's own
-  soundness.
+  interpreters. The boundary verifies the incoming state was restored. If
+  `f` leaves an exception pending, `interop` takes it and returns
+  `InteropError::Exception(PyErr)` instead of `f`'s result, so the caller
+  can propagate or handle it. Cleanup entries refuse it. It does not repair
+  a foreign wrapper's own soundness.
 - **`drain_releases`** services queued releases (see [Draining](#draining)).
 
 The closures receive no context and need no `Send` bounds: they run on the
@@ -472,9 +474,12 @@ Sealed markers for immortal singletons (`None`, booleans) may skip release
 entirely; a general integer marker may not.
 
 `Drop` must not unwind. Explicit release and draining preserve the incoming
-exception. Generated deallocators report panics as unraisable, setting
-aside any propagating exception while building the report so the caller's
-exception is not replaced (debug builds abort otherwise).
+exception. Like any deallocator, generated `tp_dealloc` and module free must
+leave the exception state exactly as they found it; CPython debug builds abort
+otherwise. They save and clear any pending exception before cleanup starts,
+and restore exactly what they saved, including no exception, on every exit
+path. A panic, or an exception left behind by cleanup, is reported as
+unraisable before the restore.
 
 #### Markers and GC
 
@@ -695,6 +700,16 @@ At the boundary, `Ok` requires a clear error indicator. `Err` has its key
 checked first; a foreign-interpreter error is queued under its own key and
 replaced with `SystemError`. Restoring an exception may decref the previous
 one, so it uses the exclusive-call protocol.
+
+Because a `PyErr` carries its own exception, a later error cannot be confused
+with an earlier one. This relies on one invariant: **while a context is
+available, the error indicator is clear.** Otherwise a stale exception could
+be captured as a later call's error, for example after an ambiguous `-1`.
+Wrappers maintain the invariant by capturing exceptions immediately. Entries
+that CPython may invoke with an exception pending (`tp_dealloc` and module
+free) save and clear it first (see [Dropping](#dropping)). Other entries
+debug-assert a clear indicator, and `interop` turns an exception left pending
+by foreign code into an `InteropError`.
 
 The built-in exception marker trait is sealed because its type pointer goes
 straight to C. Custom exception types stored as `Py<PyType>` need checked
@@ -925,6 +940,10 @@ spelling:
 - `Arc<GcSlot<T>>` and `Rc<GcSlot<T>>` are compile errors, even behind an
   alias, because shared ownership would double-report edges. The error fires
   after monomorphization.
+- `Py<T>` is rejected by default, even inside a wrapper or behind an alias,
+  because the collector cannot see it and a cycle through it would leak.
+  Use `GcSlot<T>` instead, or mark a field `#[gc(untraced)]` to keep a
+  reference that cannot be part of a cycle.
 - Anything else is untraced; a slot hidden in another wrapper leaks its
   cycles, which is safe.
 
@@ -1080,7 +1099,7 @@ outer catch is a last-resort abort.
 | Module exec | Commit the appropriate failed state phase, set a fixed `SystemError`, and return `-1`. |
 | Module or instance clear | Finish the lifecycle transition and set `SystemError`, which CPython reports as unraisable. Instance clear returns failure. Module clear returns 0, because CPython skips clearing the module dict when `m_clear` fails. |
 | Traverse | Preserve incoming exception state and propagate the visitor's exact nonzero return and any error it sets. A Rust panic is fatal because continuing with an incomplete reachability report can violate GC invariants. |
-| `tp_dealloc` and module free | Run mandatory non-panicking cleanup guards first, then report the panic as unraisable when an attached state is available. Set aside any pending exception while building the report and restore it afterwards. Abort if cleanup itself cannot be completed safely. |
+| `tp_dealloc` and module free | Save and clear any pending exception before cleanup. Run mandatory non-panicking cleanup guards, then report the panic as unraisable when an attached state is available. Restore the saved exception, or none, afterwards. Abort if cleanup itself cannot be completed safely. |
 
 Before dropping a payload or module state, deallocation commits the
 destroyed phase and installs cleanup guards, so a panic cannot cause a
