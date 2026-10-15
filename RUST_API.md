@@ -660,7 +660,7 @@ pub type PyResult<T> = Result<T, PyErr>;
 `PyErr` owns its exception, with `Py<T>`'s ownership and interpreter
 association, rather than marking one pending on the thread state. Dropping
 it queues the reference, so recovering in Rust leaves no hidden pending
-exception.
+exception. It is [`#[must_use]`](https://doc.rust-lang.org/std/attribute.must_use.html) to ensure that API users do not unintentionally miss an exception return.
 
 Exception types provide `raise(&mut ctx, message)`, which returns an owned
 `PyErr`; the exception is set only when the generated boundary restores it:
@@ -1177,7 +1177,7 @@ builds; mutable state needs interior mutability.
 ```rust
 #[derive(PyClassGc)]
 struct Node {
-    parent: GcSlot<PyInstance<Node>>,
+    parent: GcSlot<PyInstance<Self>>,
     value: u64,
 }
 ```
@@ -1225,7 +1225,7 @@ fn checksum<'a, 'py>(
 The macro checks names and emits a static `ParamSpec`. Values are extracted
 with `FromPyObject`; defaults are Rust expressions. Vectorcall binding uses a
 fixed stack array and allocation-free keyword matching, yielding
-`Borrowed<'args, 'py, PyAny>` slots with no refcount traffic. Constructor
+`Borrowed<'args, 'py, PyAny>` slots with no refcount churn. Constructor
 tuple/dict parsing fills the same slots.
 
 The glue checks its own inputs: a `ParamSpec`/slot-count mismatch is a
