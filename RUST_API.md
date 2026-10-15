@@ -9,12 +9,11 @@ features. Keeping either module's buffer-accepting interface needs the
 buffer work in the appendix, and stateful `zlib` also needs the locking and
 output-buffer designs there.
 
-Rust can call the C API efficiently, but raw FFI does not encode Rust's
+Rust can call the C API efficiently. However, raw FFI does not encode Rust's
 lifetime, aliasing, or thread-safety rules. The wrapper described here
-restores them. It depends on new private CPython support (a per-thread
+restores them. The design depends on new private CPython support (a per-thread
 availability flag, per-thread-state protection and lease counts, transition
-gates, and a native release queue), so it is not a safe model for an
-unmodified runtime. Several existing CPython bugs also interact with it; the
+gates, and a native release queue), so a modified runtime is needed for safety. Several existing CPython bugs need fixes; the
 appendix lists them as upstream prerequisites.
 
 ## Goals
