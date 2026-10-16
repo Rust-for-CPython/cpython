@@ -185,6 +185,15 @@ its own leases:
 - A state with a nonzero lease count is protected from deletion. After fork,
   vanished states' counts disappear with them.
 
+Lease acquisition requires attachment to the target interpreter throughout
+the admission check and counter increment. No safepoint, detachment, or
+reentrant call may occur between them. Closing admission requires a
+completed stop-the-world handshake, or ownership of that interpreter's GIL,
+held continuously through the final recheck and closure. The synchronization
+must make preceding lease increments visible to the finalizer and admission
+closure visible to subsequent entrants. Merely requesting a stop is
+insufficient.
+
 PEP 788 C guards keep their shared counter, because a guard can be created
 without an attached thread state and closed on another thread.
 
