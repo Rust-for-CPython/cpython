@@ -1292,7 +1292,7 @@ and checks that every Python-touching safe `c_api` wrapper takes a context
 or sealed capability, and that shared-context wrappers have an audited leaf
 contract.
 
-A new `xxtestrustapi` module, run by the regular test suite, covers testing the new Rust API correctness.
+A new `_testrustapi` module, run by the regular test suite, covers testing the new Rust API correctness.
 
 ### Performance
 
