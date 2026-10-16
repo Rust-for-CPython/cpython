@@ -145,12 +145,15 @@ The cost is that an entry blocked indefinitely in a Python callback blocks
 shutdown indefinitely (see *Shutdown progress* in the appendix). This is
 deliberate.
 
-Two fatal checks prevent leases from deadlocking:
+Two fatal checks reject direct lease-dependent shutdown cycles:
 
-- **Finalizing a leased interpreter.** A Rust callback may run code that
-  calls `Py_EndInterpreter` on an interpreter it holds a lease on. When
-  finalization starts, CPython fails fatally if the finalizing OS thread
-  holds a lease on that interpreter through any of its thread states.
+- **Finalizing while holding a lease.** `Py_EndInterpreter` and
+  `Py_FinalizeEx` fail fatally at the start of finalization if the calling OS
+  thread holds any lease, across all its thread states and interpreters.
+  Otherwise two threads could hold leases on A and B while each finalizes
+  the other.
+  Finalization scans the existing counts under the runtime's thread-list
+  lock; this adds no bookkeeping to ordinary entry or exit.
 - **Hanging a leased thread.** A thread may hold a lease on A while running
   in B (e.g. via `interp.exec()`). If B's finalization hung it, A could
   never finish finalizing. CPython's hang paths, including the one in
@@ -182,8 +185,7 @@ its own leases:
 - **Close:** once the sum is zero, stop the world (or hold the GIL), recheck
   every count, the guard counter, and the release queue, and set the flag
   only if all are clear; otherwise restart and wait again.
-- A state with a nonzero lease count is protected from deletion. After fork,
-  vanished states' counts disappear with them.
+- A state with a nonzero lease count is protected from deletion.
 
 Lease acquisition requires attachment to the target interpreter throughout
 the admission check and counter increment. No safepoint, detachment, or
@@ -287,9 +289,10 @@ crossing a generated entry. CPython therefore adds:
    internal, reject any transition while the flag is set, even with no state
    attached. Deletion also rejects a state with a nonzero protection count,
    even from another thread.
-4. **Resume:** require the flag clear and the original state attached, then
-   set the flag. If a foreign call failed to restore the state, fail fatally
-   rather than attach over an unknown state.
+4. **Resume:** require the flag clear and the original state attached, apply
+   the [exception policy](#exceptions), then set the flag. If a foreign call
+   failed to restore the state, fail fatally rather than attach over an
+   unknown state.
 5. **Exit:** clear the flag, service or transfer the entry's releases, and
    retire the sink once empty. Cleanup and panic reporting precede releasing
    the protection count and lease.
@@ -321,12 +324,14 @@ distinguishes it from explicit detachment. Lock paths that call
 `Py_MakePendingCalls` for signals use the exclusive-call protocol instead.
 
 The gate does not stop foreign code from running Python on the attached
-state (`PyObject_Call` from another library, or `PyErr_CheckSignals`). That
-violates the foreign library's own contract, and every Rust boundary it can
-reach checks the flag: a nested entry or gated detach fails fatally, GC
+state (`PyObject_Call` from another library, or `PyErr_CheckSignals`). Such
+use need not violate the foreign library's contract. Every Rust boundary it
+can reach checks the flag: a nested entry or gated detach fails fatally, GC
 clear of a Rust object is refused (leaking the cycle), and payloads are
-dropped without a context as always. Transition hooks also affect non-Rust
-code and must be benchmarked.
+dropped without a context as always. Foreign code can also set an exception
+without a transition; wrappers handle this through the [exception
+policy](#exceptions). Transition hooks also affect non-Rust code and must
+be benchmarked.
 
 #### Entry glue
 The following is a simplified example of what the Rust entrypoint glue for a function call looks like:
@@ -359,7 +364,7 @@ impl<'py> ThreadContext<'py> {
     pub fn detach_if_possible<R>(
         &mut self,
         f: impl FnOnce() -> R,
-    ) -> R;
+    ) -> PyResult<R>;
 
     pub fn interop<R>(
         &mut self,
@@ -373,11 +378,12 @@ impl<'py> ThreadContext<'py> {
 - **`detach`** suspends the context, detaches, runs `f` on the same thread,
   and restores the state, including on panic. Refusal returns `DetachError`
   before detaching. Cleanup entries refuse it. Nested callbacks may detach.
+  Pending exceptions use `DetachError::Exception(PyErr)`.
 - **`detach_if_possible`** detaches when the phase permits and otherwise runs
-  `f` attached, exactly once either way. Use it only for work valid while
-  attached, such as audited compression. Code that waits on another thread
-  needing Python must use strict `detach`, because attached waits can
-  deadlock through the GIL or stop-the-world.
+  `f` attached, after ensuring a clean exception state. Pending
+  exceptions return `Err(PyErr)`. Use it only for work valid while attached. Code that waits on another thread needing
+  Python must use strict `detach`, because attached waits can deadlock
+  through the GIL or stop-the-world.
 - **`interop`** suspends without detaching, so `f` can use a foreign safe
   wrapper that manages its own attachment, including switching
   interpreters. The boundary verifies the incoming state was restored. If
@@ -386,6 +392,10 @@ impl<'py> ThreadContext<'py> {
   can propagate or handle it. Cleanup entries refuse it. It does not repair
   a foreign wrapper's own soundness.
 - **`drain_releases`** services queued releases (see [Draining](#draining)).
+
+The three closure APIs return any preexisting exception through their error
+channel without running `f`. On return they capture pending exceptions
+before restoring availability, following the [exception policy](#exceptions).
 
 The closures receive no context and need no `Send` bounds: they run on the
 same thread, and the proof is exclusive access to the capability. Handles
@@ -574,15 +584,19 @@ A finalizer parked waiting for guards and leases needs a native wakeup, and
 whoever releases the last guard or lease must not touch the interpreter,
 which may be freed at once. The wake word and a waiting-finalizer count
 therefore live in process-global storage shared by all finalizers; wakeups
-for other interpreters are harmless. Three events wake finalizers: a
-producer setting `releases_pending`, release of the last Rust lease, and
-`PyInterpreterGuard_Close` releasing the last C guard.
+for other interpreters are harmless. Wake events are a producer setting
+`releases_pending`, release of the last Rust lease or C guard, and the
+in-flight submission count reaching zero. After releasing its final
+lifetime protection, a producer accesses only process-global notification
+storage.
 
 A waker does nothing if the waiter count is zero; otherwise it increments the
-word and unparks. The finalizer registers as a waiter first, then on each
-iteration reads the word, services releases, checks the counts, and parks
-expecting the word it read. With sequentially consistent atomics no wakeup is
-lost. The loop should also run pending calls before parking, and scheduling a
+word and unparks **all** waiters (`_PyParkingLot_UnparkAll`). A single wake
+could select another interpreter's finalizer and leave the ready one asleep.
+The finalizer registers as a waiter first, then on each iteration reads the
+word, services releases, checks the counts, and parks expecting the word it
+read. With sequentially consistent atomics no wakeup is lost. The loop should
+also run pending calls before parking, and scheduling a
 pending call should wake finalizers; otherwise a guard holder waiting on a
 pending call scheduled after the last `_Py_FinishPendingCalls` deadlocks (an
 existing bug; see the appendix).
@@ -648,16 +662,7 @@ ownership records on every handle (see the appendix).
 
 #### Fork
 
-The registry, sinks, availability flag, and protection and lease counts join
-CPython's fork protocol. Detached producers must be quiesced, and fork
-preparation must not wait while holding a lock they need. The child
-reinitializes synchronization, keeps accepted releases for surviving
-interpreters, clears vanished states' counts before deleting the states, and
-retires endpoints for removed interpreters. If after-fork cleanup would
-delete a state protected by a suspended entry on the forking thread, the
-child fails fatally. `PyOS_AfterFork()` without `PyOS_BeforeFork()` cannot be
-made safe. The queue is not ready for general use until both sides are
-tested.
+Fork support with active Rust entries is still TBD.
 
 ### Exceptions
 
@@ -685,45 +690,56 @@ fn checked_size(ctx: &mut ThreadContext<'_>, size: usize) -> PyResult<i32> {
 }
 ```
 
+Immediately before an error-sensitive C call, its wrapper checks for a
+preexisting exception. If present, it takes ownership and returns an error
+without making the call. Audited leaves may preserve the indicator;
+reference release and deallocation follow their save/clear/restore policy.
 When a C call fails, its wrapper immediately takes the raised exception
 (with `_PyErr_GetRaisedException`, a pointer transfer) while it still
 controls the originating state:
 
 ```rust
-// Within the private C-call wrapper, with its exclusive borrow held:
+// After exception preflight and the C call, with the exclusive borrow held:
 if ptr.is_null() {
     // SAFETY: the audited C API's NULL result guarantees an exception on
     // this exact, restored state. Capture transfers the raised reference.
     Err(unsafe { take_raised_exception(call_state) })
 } else {
-    // Transfer the owned result into the entry's Bound representation.
+    // Require a clear indicator before transferring the owned result.
 }
 ```
 
 Ambiguous sentinels also check the error indicator. A missing exception
-becomes `SystemError`. Failures while creating or reporting an error must
-leave an appropriate exception such as `MemoryError`.
+becomes `SystemError`. Success with a pending exception discards the result
+under the exclusive-call protocol and returns the captured exception.
+Failures while creating or reporting an error must leave an appropriate
+exception such as `MemoryError`.
 
-At the boundary, `Ok` requires a clear error indicator. `Err` has its key
+At a generated callback boundary, a pending exception turns `Ok` into `Err`,
+even if no wrapped operation followed author code. An explicit `Err` remains
+primary; secondary exceptions are reported as unraisable. `Err` has its key
 checked first; a foreign-interpreter error is queued under its own key and
 replaced with `SystemError`. Restoring an exception may decref the previous
 one, so it uses the exclusive-call protocol.
 
-Because a `PyErr` carries its own exception, a later error cannot be confused
-with an earlier one. This relies on one invariant: **while a context is
-available, the error indicator is clear.** Otherwise a stale exception could
-be captured as a later call's error, for example after an ambiguous `-1`.
-Wrappers maintain the invariant by capturing exceptions immediately. Entries
-that CPython may invoke with an exception pending (`tp_dealloc` and module
-free) save and clear it first (see [Dropping](#dropping)). Other entries
-debug-assert a clear indicator, and `interop` turns an exception left pending
-by foreign code into an `InteropError`.
+Context availability proves attachment, not ownership of the error
+indicator: safe foreign code can set it without crossing a gate. The
+preflight and capture rules keep stale errors out of later C calls.
+Function entries return unexpected pending exceptions before invoking author
+code; `tp_dealloc` and module free save and restore them (see
+[Dropping](#dropping)).
+
+Suspended author closures, including bytes builders, use the same capture
+policy. Discarded results and panic payloads are dropped while suspended,
+and the indicator is checked again afterwards. During unwinding, restoration
+captures secondary exceptions for later unraisable reporting at the boundary;
+it neither replaces the original panic nor unwinds itself.
 
 The built-in exception marker trait is sealed because its type pointer goes
 straight to C. Custom exception types stored as `Py<PyType>` need checked
-binding. Converting a native error (identity, entry, detach, interop) into a
-`PyErr` requires an explicit mutable context; nothing consults ambient
-attachment.
+binding. Converting native failures into a `PyErr` requires an explicit
+mutable context; detach/interop exception variants already own a `PyErr`.
+Nothing consults ambient attachment.
 
 ### Concrete objects and conversions
 
@@ -804,7 +820,7 @@ It does not incref or copy:
 
 ```rust
 let input = data.as_bytes(ctx);
-let output = ctx.detach_if_possible(|| compress_without_python(input));
+let output = ctx.detach_if_possible(|| compress_without_python(input))?;
 ```
 
 This proof does not extend to arbitrary buffer exporters (see the
@@ -987,6 +1003,13 @@ CPython creates the module and binds its functions before allocating state;
 `MaybeUninit<S>`). An unexecuted module is reachable, from
 `importlib.util.module_from_spec` or `sys.modules` mid-import, so every
 callback handles missing storage. The macro rejects over-aligned types.
+
+This requires a CPython publication fix: initialize the zero-valid storage
+header before publishing `md_state`, synchronize pointer readers with that
+publication, and serialize competing allocations. Current allocation stores
+the pointer before zeroing it. Another thread can call an already-bound
+function during exec; release/acquire on the phase alone cannot protect the
+allocation containing that phase.
 
 | Operation | Allowed source phase | Published phase and access |
 | --- | --- | --- |
@@ -1294,11 +1317,13 @@ attached-fallback CPU work, and output copying versus `PyBytesWriter`.
 ## Appendix: Open decisions and future work
 
 - **Upstream CPython prerequisites.** These bugs reproduce without Rust:
+  - Module-state allocation publishes `md_state` before zeroing it. Concurrent
+    callbacks need initialized storage and synchronized pointer publication
+    (see [State lifecycle](#state-lifecycle)).
   - A PEP 788 guard held by a thread that does not survive `fork()` stays
-    counted, hanging the child's finalization. Leases avoid this by being
-    per thread state, but public guards can be handed between threads, so a
-    guard from a vanished thread may belong to the survivor. Guards need an
-    ownership or fork-invalidation contract.
+    counted, hanging the child's finalization. Public guards can be handed
+    between threads, so a guard from a vanished thread may belong to the
+    survivor. Guards need an ownership or fork-invalidation contract.
   - A daemon thread blocked in a subinterpreter ended by main-interpreter
     finalization can keep a dangling interpreter pointer and read freed
     memory on reattach. Leases make this reliable; the fatal hang check does
