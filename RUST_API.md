@@ -2,12 +2,7 @@
 
 ## Overview
 
-This document designs a safe Rust API for in-tree CPython extension modules.
-`zlib` is the first full migration target and drives the initial
-requirements; `_base64` and `Encoder` examples illustrate individual
-features. Keeping either module's buffer-accepting interface needs the
-buffer work in the appendix, and stateful `zlib` also needs the locking and
-output-buffer designs there.
+This document designs a safe Rust API for in-tree CPython extension modules. `zlib` is the first full migration target.
 
 Rust can call the C API efficiently. However, raw FFI does not encode Rust's
 lifetime, aliasing, or thread-safety rules. The wrapper described here
