@@ -110,9 +110,9 @@ between interpreters. Wrappers are added as Rust modules need them.
 6. [Exceptions](#exceptions)
 7. [Concrete objects and conversions](#concrete-objects-and-conversions)
 8. [Modules](#modules)
-9. [Functions](#functions)
-10. [Classes](#classes)
-11. [Argument parsing](#argument-parsing)
+9. [Argument parsing](#argument-parsing)
+10. [Functions](#functions)
+11. [Classes](#classes)
 
 ### Bindings and the FFI boundary
 
@@ -814,21 +814,24 @@ it neither replaces the original panic nor unwinds itself.
 
 The built-in exception marker trait is sealed because its type pointer goes
 straight to C. Custom exception types stored as `Py<PyType>` need checked
-binding. Converting Rust error values into a `PyErr` requires an explicit
+binding and `PyExceptionClass_Check` before use as exception classes.
+Converting Rust error values into a `PyErr` requires an explicit
 mutable context; detach/interop exception variants already own a `PyErr`.
 
 ### Concrete objects and conversions
 
 Concrete types such as `PyBytes` and `PyModule` are transparent markers with
 type-specific methods on `Bound<'py, Marker>`. The set grows with module
-needs. `Bound<PyModule>` can add values and types, and
-`PyType::new_exception` creates a heap exception type.
+needs. `Bound<PyModule>` can add values and types.
 
-`PyType::new_exception` shows why a C function's nominal result type is not
-proof: `PyErr_NewException` calls `type(name, bases, dict)`, whose metaclass
-can return any object. The wrapper checks the result is a type. The helper
-that types a C result is `unsafe`, and Python-choosable results use a checked
-downcast.
+`PyBaseException::new_exception_type` calls `PyErr_NewException` and returns
+`PyResult<Bound<'py, PyType>>`. The C function can invoke a custom metaclass
+and does not validate its result. The wrapper uses
+[`PyExceptionClass_Check`](https://docs.python.org/3/c-api/exceptions.html#c.PyExceptionClass_Check)
+to require `BaseException` or a subclass, returning `TypeError` otherwise.
+Checking only that the result is a type is insufficient. The helper that
+converts unchecked C results to typed handles is `unsafe`; results chosen
+by Python must be validated first.
 
 `PyBytes::new_with` lends a zeroed unpublished buffer; `new_with_uninit`
 skips zeroing:
@@ -952,6 +955,24 @@ be distinct statics. A private `UnsafeCell` field makes const promotion a
 compile error and prevents merging identical statics. `ModuleDef<S>`,
 `ModuleRef<S>`, and `ModuleMethodDef<S>` are also invariant in `S` (via
 `fn(S) -> S`), per the [safety rules](#safety-rules).
+
+#### Module object access
+
+Functions and methods may request an optional
+`module: ModuleRef<'a, 'py, S>` parameter immediately after `mod_state`.
+The macro recognizes its type and supplies the module used to obtain
+`mod_state`: the function's module or the defining class's module. It is
+not a Python argument. Module initialization already receives `ModuleRef`.
+
+```rust
+impl<'a, 'py, S> ModuleRef<'a, 'py, S> {
+    pub fn as_object(&self) -> Borrowed<'a, 'py, PyModule>;
+}
+```
+
+`module.as_object()` copies the stored borrowed handle without an incref;
+its lifetime remains bounded by the module owner and entry scope. This
+avoids storing a reference back to the module in its state.
 
 #### Module state
 
@@ -1114,21 +1135,69 @@ Process-global Rust caches may hold only Rust data or checked opaque
 handles. The identity and lifetime checks apply even when import checks are
 disabled.
 
-### Functions
-
-Python-callable, module-scoped functions are ordinary Rust functions whose first two
-parameters are the thread context and module state:
+### Argument parsing
 
 ```rust
+#[pyfunction(signature = (data, value = 1, /))]
+fn checksum<'a, 'py>(
+    ctx: &mut ThreadContext<'py>,
+    mod_state: &ChecksumState,
+    data: Borrowed<'a, 'py, PyBytes>,
+    value: u32,
+) -> PyResult<u32> {
+    // ...
+}
+```
+
+The wrapper supplies `ctx`, `mod_state`, and any optional `module` parameter;
+only the remaining parameters appear in `signature` and are parsed from
+Python arguments. Methods also receive `self` and the defining class, `cls`.
+
+The macro checks names and emits a static `ParamSpec`. Values are extracted
+with `FromPyObject`; defaults are Rust expressions. Vectorcall binding uses a
+fixed stack array and allocation-free keyword matching, yielding
+`Borrowed<'args, 'py, PyAny>` slots with no refcount churn. Constructor
+tuple/dict parsing fills the same slots.
+
+The glue checks its own inputs and keeps every argument alive while it is
+in use:
+
+- A `ParamSpec`/slot-count mismatch is a checked error.
+- `kwnames` must be a tuple before its entries are read.
+- Constructor keyword values are never borrowed from the `kwargs` dict.
+  Converting one argument can run Python code, such as `__index__`, that
+  removes another value from the dict, which would free a borrowed value.
+  Before converting any argument, the parser takes its own references to
+  every keyword value, and it keeps them until the call and result
+  conversion finish. It stores them in a private tuple rather than a list,
+  because Python code can find a list through `gc.get_objects()` and clear
+  it.
+- Positional arguments and vectorcall arrays can be borrowed without a
+  copy: the caller keeps them alive for the whole call, and Python code
+  cannot modify them.
+
+Argument errors raise `TypeError`.
+
+### Functions
+
+Python-callable, module-scoped functions are ordinary Rust functions whose
+first two parameters are `ctx` (the thread context) and `mod_state` (module
+state):
+
+```rust
+/// Encode data using the standard Base64 alphabet.
 #[pyfunction(signature = (data, /))]
 fn standard_b64encode<'a, 'py>(
     ctx: &mut ThreadContext<'py>,
-    _state: &Base64State,
+    _mod_state: &Base64State,
     data: Borrowed<'a, 'py, PyBytes>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     // ...
 }
 ```
+
+An optional `module` parameter provides
+[module object access](#module-object-access).
 
 A body using only leaf operations may take `&ThreadContext`. `#[pyfunction]`
 emits a `METH_FASTCALL | METH_KEYWORDS` trampoline that enters panic
@@ -1140,6 +1209,10 @@ function, and converts the result before `'py` ends. Methods use
 Argument binding, defaults, and the call live in a generated safe function,
 so author code never compiles under `unsafe`. The macros reject `unsafe`,
 `async`, `const`, `extern`, and generic functions.
+
+`#[pyfunction]` uses the Rust function's doc comments (`///` or `#[doc = ...]`)
+for the Python `__doc__`, storing their text in `ml_doc`. The same rule
+applies to methods.
 
 #### Panic containment
 
@@ -1290,8 +1363,9 @@ unwind, the unpublished payload is dropped with the context suspended.
 
 Methods recover the defining module through `METH_METHOD`, validate its
 state and key, and bound borrows by owner and entry. They receive `&self`,
-never `&mut self`, since methods can be called concurrently on free-threaded
-builds; mutable state needs interior mutability.
+`cls`, `ctx`, and `mod_state`, as described under [Methods](#methods).
+`&self` borrows the instance's Rust payload; concurrent calls on free-threaded
+builds require interior mutability rather than `&mut self`.
 
 ```rust
 #[derive(PyClassGc)]
@@ -1316,55 +1390,49 @@ link), and non-instantiable unless they define `tp_new`.
 
 #### Methods
 
-`#[pymethods]` accepts:
-
-- `#[pyfunction]`: an instance method with a `PyCMethod` trampoline, taking
-  `&C::State`;
-- `#[getter]` and `#[setter]`: halves of a `ClassGetSetDef<C>`;
-- `#[new]`: a `tp_new` trampoline that parses arguments, constructs `C`, and
-  moves it into a new allocation.
-
-It emits `C::PY_METHODS`, `C::PY_GETSETS`, and `C::PY_NEW`, installed with
-`methods`, `getsets`, and `constructor`. All function-glue rules apply.
-
-### Argument parsing
+Instance methods take `&self`, `cls`, `ctx`, and `mod_state`, followed by
+their Python arguments:
 
 ```rust
-#[pyfunction(signature = (data, value = 1, /))]
-fn checksum<'a, 'py>(
-    ctx: &mut ThreadContext<'py>,
-    state: &ChecksumState,
-    data: Borrowed<'a, 'py, PyBytes>,
-    value: u32,
-) -> PyResult<u32> {
-    // ...
+#[pymethods]
+impl Encoder {
+    #[pyfunction(signature = (data, /))]
+    fn encode<'a, 'py>(
+        &self,
+        cls: Borrowed<'a, 'py, PyType<Self>>,
+        ctx: &mut ThreadContext<'py>,
+        mod_state: &ModuleStateType,
+        data: Borrowed<'a, 'py, PyBytes>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        // ...
+    }
 }
 ```
 
-The macro checks names and emits a static `ParamSpec`. Values are extracted
-with `FromPyObject`; defaults are Rust expressions. Vectorcall binding uses a
-fixed stack array and allocation-free keyword matching, yielding
-`Borrowed<'args, 'py, PyAny>` slots with no refcount churn. Constructor
-tuple/dict parsing fills the same slots.
+`cls` is the defining class supplied by `METH_METHOD`; `mod_state` is a
+shared borrow of that class's module state (`&C::State`). The wrapper
+supplies these parameters before parsing Python arguments. Methods may
+also request the optional `module` parameter after `mod_state`.
 
-The glue checks its own inputs and keeps every argument alive while it is
-in use:
+`#[pymethods]` accepts:
 
-- A `ParamSpec`/slot-count mismatch is a checked error.
-- `kwnames` must be a tuple before its entries are read.
-- Constructor keyword values are never borrowed from the `kwargs` dict.
-  Converting one argument can run Python code, such as `__index__`, that
-  removes another value from the dict, which would free a borrowed value.
-  Before converting any argument, the parser takes its own references to
-  every keyword value, and it keeps them until the call and result
-  conversion finish. It stores them in a private tuple rather than a list,
-  because Python code can find a list through `gc.get_objects()` and clear
-  it.
-- Positional arguments and vectorcall arrays can be borrowed without a
-  copy: the caller keeps them alive for the whole call, and Python code
-  cannot modify them.
+- `#[pyfunction]`: an instance method with a `PyCMethod` trampoline;
+- `#[getter]` and `#[setter]`: halves of a `ClassGetSetDef<C>`, using the
+  same `&self`, `cls`, `ctx`, and `mod_state` prefix. Their glue obtains
+  `cls` from the instance's type, since generated types are final;
+- `#[new]`: a `tp_new` trampoline taking `cls`, `ctx`, and `mod_state`
+  before Python arguments. It constructs `C` and moves it into a new
+  allocation.
 
-Argument errors raise `TypeError`.
+The generated setter checks for a `NULL` value (attribute deletion) before
+argument conversion or calling the Rust setter. It raises `AttributeError`
+and returns `-1`; Python `None` remains an ordinary value. A future
+`#[deleter]` could provide a separate Rust callback, dispatched through the
+same C `PyGetSetDef.set` slot.
+
+`#[pymethods]` emits `C::PY_METHODS`, `C::PY_GETSETS`, and `C::PY_NEW`,
+installed with `methods`, `getsets`, and `constructor`. All function-glue
+rules apply.
 
 ## Testing
 
