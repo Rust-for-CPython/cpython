@@ -1338,8 +1338,7 @@ attached-fallback CPU work, and output copying versus `PyBytesWriter`.
   pending tasks in `_asyncio`. The API cannot express these yet. Traced
   edges live only in `GcSlot<T>` or in containers of slots that cannot
   change through `&`, and payloads are only reachable through `&self`. Such
-  a module today has to keep its references in untraced `Mutex` or
-  `RefCell` storage, where cycles through them leak. Mutable containers
+  a module today has to keep its references in untraced `Mutex`, where cycles through them leak. Mutable containers
   such as a `GcVec<T>` or `GcMap<K, T>` would fill that gap, but each must
   prove what `GcSlot` does:
   - every reference is checked against the container's interpreter key
