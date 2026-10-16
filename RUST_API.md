@@ -8,8 +8,61 @@ Rust can call the C API efficiently. However, raw FFI does not encode Rust's
 lifetime, aliasing, or thread-safety rules. The wrapper described here
 restores them. The design depends on new private CPython support (a per-thread
 availability flag, per-thread-state protection and lease counts, transition
-gates, and a native release queue), so a modified runtime is needed for safety. Several existing CPython bugs need fixes; the
-appendix lists them as upstream prerequisites.
+checks, and a release queue that accepts references without an attached
+thread state), so a modified runtime is needed for safety. Several existing
+CPython bugs need fixes; the appendix lists them as upstream prerequisites.
+
+## Glossary
+
+This glossary explains the design-specific uses of terms in this document.
+Standard Rust terms use their usual meanings; in particular,
+`&T` is a shared borrow and `&mut T` is an exclusive (mutable) borrow.
+
+- **Entry:** a call into Rust from Python or the C API, such as a module
+  function, method, or slot callback (`exec`, `clear`, etc.). Generated
+  **entry glue** wraps the Rust function; its private **entry guard** keeps
+  resources alive through argument parsing, the call, result conversion,
+  and cleanup. See [Entry glue](#entry-glue).
+- **Execution phase:** the circumstances in which CPython calls Rust:
+  ordinary execution, finalization cleanup, or GC traversal. Each permits
+  different operations; see [Execution phases](#execution-phases).
+- **Capability:** a value or reference that proves permission to perform an
+  operation. Here this is normally a borrow of `ThreadContext`, with
+  restricted alternatives for GC traversal and reference release.
+- **Class payload:** the Rust data stored in a Python instance. See
+  [Classes](#classes).
+- **Leaf operation:** an operation that preserves attachment and
+  cannot re-enter Python, invoke arbitrary Rust callbacks, run deallocators,
+  or reach a safepoint that suspends execution or permits re-entry. It may
+  still call other C functions. Examples include binding a handle to a
+  context and reading immutable bytes; see
+  [The thread context](#the-thread-context).
+- **Safepoint:** a point in a runtime operation where the thread may pause
+  or service pending work, for example to handle a stop-the-world request.
+- **Exclusive context access:** an `&mut ThreadContext` borrow. Operations
+  that can run callbacks or change attachment require it, and temporarily
+  suspend the context while making the call. This is Rust's exclusive
+  borrow, not a lock on the interpreter or its objects.
+- **Available / suspended context:** an available context may be used by
+  safe Rust code. Suspension temporarily makes it unavailable while keeping
+  the original thread state protected. Suspension alone does not detach
+  the thread; see [Scope transitions](#scope-transitions).
+- **Finalization lease:** keeps an interpreter alive for the duration of a
+  Rust entry, including while detached. See
+  [Finalization leases](#finalization-leases).
+- **Admission:** permission to start an entry or submit a reference for
+  release. Closing admission during finalization prevents new work, apart
+  from the explicitly authorized cleanup described below.
+- **Gate:** a runtime check that rejects a thread-state transition, such as
+  attachment, detachment, or deletion, when it would invalidate a Rust
+  context. See [Gated and exempt paths](#gated-and-exempt-paths).
+- **Release sink / queue:** a sink buffers references awaiting `Py_DECREF`
+  for one entry; the queue holds them for an interpreter. **Draining** means
+  performing those deferred decrefs. See
+  [Deferred reference release](#deferred-reference-release).
+- **Foreign code:** C or Rust code outside this API, including other Rust
+  wrappers of the C API. See
+  [Detachment and foreign wrappers](#detachment-and-foreign-wrappers).
 
 ## Goals
 
@@ -82,8 +135,9 @@ may touch Python requires a capability: a borrow of `ThreadContext` (shared
 for audited leaf operations, exclusive for anything that can run callbacks
 or change attachment), or a restricted private capability for GC traversal
 or reference release. An operation without one needs an audited proof that
-its whole call path is thread-state-free. Until there is async `Drop`/`Drop` with context, `Drop` never obtains a
-capability; it only submits a release.
+its whole call path does not access a thread state. Until there is async
+`Drop`/`Drop` with context, `Drop` never obtains a capability; it only submits
+a release.
 
 ### Interpreter identity and lifetime
 
@@ -202,15 +256,16 @@ admission closes, an entry is authorized if and only if its attached thread
 state is the one finalizing that interpreter. Cleanup contexts cannot
 request explicit detachment or unrestricted interoperation; an audited C
 call may detach internally only if finalization cannot advance until it
-returns. User code and foreign threads cannot manufacture authorization. It
+returns. User code and other threads cannot manufacture authorization. It
 ends at the [final drain point](#shutdown).
 
-#### Future native-thread entry
+#### Future entry from threads created outside Python
 
 The initial API creates contexts only at generated C entries. A future safe
-native-thread entry should build on `PyThreadState_Ensure` and
-`PyThreadState_EnsureFromView`, take an explicit interpreter key rather than
-trusting view lookup, acquire a lease before attaching, and report shutdown
+API for threads created outside Python should build on
+`PyThreadState_Ensure` and `PyThreadState_EnsureFromView`, take an explicit
+interpreter key rather than trusting view lookup, acquire a lease before
+attaching, and report shutdown
 failure without a Python exception. `PyGILState_Ensure` must not implicitly
 select the main interpreter.
 
@@ -232,7 +287,7 @@ pub struct ThreadContext<'py> {
 
 The marker makes `'py` invariant and the context `!Send + !Sync`. It is
 neither `Copy` nor `Clone`, and only generated entry glue constructs it.
-`'py` is a fresh brand per entry, and `Bound` and `Borrowed` are invariant in
+`'py` is a fresh lifetime per entry, and `Bound` and `Borrowed` are invariant in
 it too, so separate entries cannot mix scoped values even within one
 interpreter.
 
@@ -243,14 +298,30 @@ interpreter.
 
 The classification covers the entire call path, including failure handling,
 allocator hooks, and cleanup. A shared-context operation reports failures
-as native errors, since raising would need exclusive access. New wrappers
-default to exclusive until audited, and a blocking acquisition is never a
-leaf. Attachment does not protect object contents from concurrent
-mutation on free-threaded builds.
+as Rust error values without setting Python's error indicator, since raising
+would need exclusive access. New wrappers default to exclusive until audited,
+and a blocking acquisition is never a leaf operation. Attachment does not
+protect object contents from concurrent mutation on free-threaded builds.
 
 Holding `&mut ThreadContext` does not make the context unavailable. A
 private wrapper **suspends** it only around the actual reentrant C call or
 closure, and never passes a suspended context to author code.
+
+#### Execution phases
+
+An **execution phase** determines which operations CPython permits when it
+calls Rust. It is separate from whether a thread is attached or a context
+is available or suspended.
+
+| Execution phase | Permitted operations |
+| --- | --- |
+| Ordinary execution | An entry holds a finalization lease and may use the operations allowed by its shared or exclusive context borrow, including explicit detachment with exclusive access. |
+| Finalization cleanup | Callbacks use [cleanup authorization](#cleanup-authorization). They cannot request explicit detachment or unrestricted interoperation; an audited C call may detach internally only if finalization cannot advance until it returns. |
+| GC traversal | Callbacks use the restricted GC visitor operations, without a general-purpose `ThreadContext`. They must obey the [GC slot synchronization](#gc-slot-synchronization) rules. |
+
+After the [final drain point](#shutdown), no entry can obtain a context.
+The module and instance lifecycle states described later (such as `Ready`
+and `Cleared`) track initialization and destruction separately.
 
 #### Availability flag and protection count
 
@@ -274,12 +345,13 @@ crossing a generated entry. CPython therefore adds:
 #### Scope transitions
 
 1. **Enter:** require the flag clear; verify the attached state and
-   execution phase; acquire a lease; increment the protection count. Only
+   [execution phase](#execution-phases); acquire a lease (or use cleanup
+   authorization during finalization); increment the protection count. Only
    then set the flag and publish the context.
-2. **Suspend:** clear the flag before a reentrant operation. Preflight
-   refusal leaves attachment and the flag unchanged without raising. The
-   restoration guard keeps the original state. Suspension does not broaden
-   the C operations the execution phase permits.
+2. **Suspend:** clear the flag before a reentrant operation. Refusal by the
+   initial checks leaves attachment and the flag unchanged without raising.
+   The restoration guard keeps the original state. Suspension does not
+   broaden the C operations the execution phase permits.
 3. **Gate:** CPython's attach, detach, swap, and deletion paths, public and
    internal, reject any transition while the flag is set, even with no state
    attached. Deletion also rejects a state with a nonzero protection count,
@@ -316,7 +388,8 @@ A path is exempt only if no callback or Rust access can run before the
 exact state is restored. The parking lot calls the public
 `PyEval_ReleaseThread`/`PyEval_AcquireThread`, so the private marker is what
 distinguishes it from explicit detachment. Lock paths that call
-`Py_MakePendingCalls` for signals use the exclusive-call protocol instead.
+`Py_MakePendingCalls` for signals require exclusive context access and
+suspension instead.
 
 The gate does not stop foreign code from running Python on the attached
 state (`PyObject_Call` from another library, or `PyErr_CheckSignals`). Such
@@ -333,7 +406,8 @@ The following is a simplified example of what the Rust entrypoint glue for a fun
 
 ```rust
 // SAFETY: only generated C callbacks with an attached state and valid inputs
-// may enter; the implementation performs scope entry and lifetime admission.
+// may enter; the implementation checks the execution phase and establishes
+// a context with a lease or cleanup authorization.
 unsafe fn with_current<R>(
     f: impl for<'py> FnOnce(&mut ThreadContext<'py>) -> R,
 ) -> Result<R, EntryError>;
@@ -343,9 +417,9 @@ unsafe fn with_current<R>(
 reject author functions that name a specific lifetime such as `'static`.
 Generated wrappers convert results to raw C values before
 returning. The entry guard lives through parsing, conversion, unwinding,
-release processing, and exception reporting. `EntryError` is native;
-callback-specific glue reports it without manufacturing a context after
-admission closes.
+release processing, and exception reporting. `EntryError` is a Rust error
+value; callback-specific glue reports it without manufacturing a context
+after admission closes.
 
 #### Detachment and foreign wrappers
 
@@ -374,8 +448,8 @@ impl<'py> ThreadContext<'py> {
   and restores the state, including on panic. Refusal returns `DetachError`
   before detaching. Cleanup entries refuse it. Nested callbacks may detach.
   Pending exceptions use `DetachError::Exception(PyErr)`.
-- **`detach_if_possible`** detaches when the phase permits and otherwise runs
-  `f` attached, after ensuring a clean exception state. Pending
+- **`detach_if_possible`** detaches when the execution phase permits and
+  otherwise runs `f` attached, after ensuring a clean exception state. Pending
   exceptions return `Err(PyErr)`. Use it only for work valid while attached. Code that waits on another thread needing
   Python must use strict `detach`, because attached waits can deadlock
   through the GIL or stop-the-world.
@@ -421,16 +495,17 @@ No implicit operation (`Debug`, equality, hashing, indexing, iteration,
 supplies `'py`. `Bound` stores the pointer and a pointer to its entry's
 release sink, which records the interpreter key. `Py<T>` stores the pointer
 and an `InterpreterKey`. Both owning forms are two words on 64-bit targets.
-The scope brand proves association, not permission: handles can exist while
-the context is suspended but cannot be used without an available context.
+The entry's `'py` lifetime proves association, not permission: handles can
+exist while the context is suspended but cannot be used without an available
+context.
 
 #### Binding
 
 Every safe `Py<T>` operation that touches the object (binding, downcasting,
 cloning, conversion, destruction) first compares its key with the
-context's, before dereferencing anything. Mismatch is a native
-`InterpreterMismatch`. This also rejects expired handles whose address a
-later interpreter reuses.
+context's, before dereferencing anything. Mismatch returns the Rust error
+`InterpreterMismatch` without setting Python's error indicator. This also
+rejects expired handles whose address a later interpreter reuses.
 
 ```rust
 impl<T> Py<T> {
@@ -475,7 +550,8 @@ published memory. Shared class and module payloads must be `Send + Sync`.
 object.drop_with(ctx)?;
 ```
 
-`drop_with(&mut ctx)` releases directly under the exclusive-call protocol.
+`drop_with(&mut ctx)` releases directly with exclusive context access and
+the context suspended during the decref.
 For `Py`, it returns `InterpreterMismatch` on mismatch after falling back to
 an ordinary queued drop.
 
@@ -496,9 +572,9 @@ unraisable before the restore.
 
 #### Markers and GC
 
-`PyAny` is the erased marker; specific markers like `PyBytes` share its
-transparent layout, so upcasts are free. There is no `&mut PyAny`, since
-Python objects can change through aliases.
+`PyAny` is the marker for any Python object; specific markers like `PyBytes`
+share its transparent layout, so upcasts are free. There is no `&mut PyAny`,
+since Python objects can change through aliases.
 
 A `Py<T>` in pure Rust state may stay opaque after its interpreter expires.
 Publishing it as a traced GC edge requires association with the containing
@@ -511,8 +587,9 @@ object's interpreter at construction and every mutation.
 Each entry has a release sink with a small inline buffer, owned by the entry
 guard. `Bound::drop` appends to it with no allocation, lock, or Python call.
 When it fills, it transfers a batch to the interpreter queue or obtains
-Python-free overflow storage, never decrefing in `Drop`. If both fail, only
-the incoming reference is abandoned; accepted ones are kept.
+overflow storage without calling Python or attaching a thread state, never
+decrefing in `Drop`. If both fail, only the incoming reference is abandoned;
+accepted ones are kept.
 
 **Aliasing invariant:** no `&mut` to sink storage may be live across an
 operation that can drop a handle into that sink. Pushes use interior
@@ -527,8 +604,8 @@ authorized cleanup sinks overflow through a private cleanup route.
 
 #### The release queue
 
-CPython owns one native release queue per interpreter lifetime, behind a new
-private API:
+CPython owns one release queue per interpreter lifetime. It accepts
+references without an attached thread state through a new private API:
 
 ```c
 typedef enum {
@@ -547,12 +624,12 @@ Only `_Py_RELEASE_QUEUED` consumes the reference: the queue takes it over
 without an incref, and the producer must not also decref it. Failure
 consumes nothing, raises nothing, and does not inspect the object.
 
-Submission works from any native thread (detached, in another interpreter,
+Submission works from any OS thread (detached, in another interpreter,
 or after `Py_FinalizeEx`). It must not read the object, touch its refcount,
 call Python, attach, or panic, and it must not wait for the target
-interpreter. Allocation must be Python-free: `PyMem_RawMalloc` does not
-qualify, because under tracemalloc its hook calls `PyGILState_Ensure`. C
-`malloc` and a native mutex do.
+interpreter. Allocation must not call Python or attach a thread state:
+`PyMem_RawMalloc` does not qualify, because under tracemalloc its hook calls
+`PyGILState_Ensure`. C `malloc` and an OS mutex do.
 
 A process-lifetime registry maps keys to queue endpoints and survives
 reinitialization. Lookup, admission, and notification are protected against
@@ -569,15 +646,15 @@ calls-to-do bit. GIL builds also check the flag on GIL acquisition. Producers
 attached to the target set their own eval breaker; others signal its threads
 under the thread-list lock.
 
-Checkpoint drains are bounded by node count so producers cannot starve the
-eval loop. A drain that leaves work, or defers because a context is
-available, re-arms the flag.
+Drains during eval-breaker handling or GIL acquisition are bounded by node
+count so producers cannot starve the eval loop. A drain that leaves work, or
+defers because a context is available, re-arms the flag.
 
 #### Waking the finalizer
 
-A finalizer parked waiting for guards and leases needs a native wakeup, and
-whoever releases the last guard or lease must not touch the interpreter,
-which may be freed at once. The wake word and a waiting-finalizer count
+A finalizer parked waiting for guards and leases needs a wakeup that does
+not require attachment, and whoever releases the last guard or lease must
+not touch the interpreter, which may be freed at once. The wake word and a waiting-finalizer count
 therefore live in process-global storage shared by all finalizers; wakeups
 for other interpreters are harmless. Wake events are a producer setting
 `releases_pending`, release of the last Rust lease or C guard, and the
@@ -598,16 +675,18 @@ existing bug; see the appendix).
 
 #### Draining
 
-Draining requires the exclusive-call protocol, via `ctx.drain_releases()` or
-private release authorization between scopes. Checkpoints defer draining
-while any context on the thread is available.
+Draining requires exclusive context access and suspension via
+`ctx.drain_releases()`, or private release authorization between scopes.
+Eval-breaker handling and GIL acquisition defer draining while any context
+on the thread is available.
 
 A consumer that finds work takes one lease and increments its state's
 protection count for the batch, holding them through decrefs and reentrant
 callbacks, so shutdown accounts for in-progress batches. It takes no lease
 for an empty queue, since releasing one would wake the finalizer forever. The
-consumer drops native locks before decrefing. Each reference is released
-exactly once, attached to its own interpreter; until then it counts as an
+consumer releases locks that do not require attachment before decrefing.
+Each reference is released exactly once, attached to its own interpreter;
+until then it counts as an
 external strong reference for GC, so moving an edge out of a GC field
 removes the field's edge before submitting the release.
 
@@ -649,9 +728,10 @@ drain can run and the queue is abandoned at retirement.
 #### Abandonment
 
 On `CLOSED`, `EXPIRED`, or `NO_MEMORY`, `Drop` abandons the reference and
-records a Python-free, non-allocating, non-panicking diagnostic. It never
-retries in another interpreter. This can leak but never exposes an expired
-object. Since safe Rust can forget handles, correctness never depends on
+records a diagnostic without calling Python, attaching a thread state,
+allocating, or panicking. It never retries in another interpreter. This can
+leak but never exposes an expired object. Since safe Rust can forget handles,
+correctness never depends on
 destructors running. Reclaiming every retained `Py<T>` would need revocable
 ownership records on every handle (see the appendix).
 
@@ -687,14 +767,15 @@ fn checked_size(ctx: &mut ThreadContext<'_>, size: usize) -> PyResult<i32> {
 
 Immediately before an error-sensitive C call, its wrapper checks for a
 preexisting exception. If present, it takes ownership and returns an error
-without making the call. Audited leaves may preserve the indicator;
+without making the call. Audited leaf operations may preserve the indicator;
 reference release and deallocation follow their save/clear/restore policy.
 When a C call fails, its wrapper immediately takes the raised exception
 (with `_PyErr_GetRaisedException`, a pointer transfer) while it still
 controls the originating state:
 
 ```rust
-// After exception preflight and the C call, with the exclusive borrow held:
+// After checking for a pending exception and making the C call,
+// with the exclusive borrow held:
 if ptr.is_null() {
     // SAFETY: the audited C API's NULL result guarantees an exception on
     // this exact, restored state. Capture transfers the raised reference.
@@ -706,20 +787,21 @@ if ptr.is_null() {
 
 Ambiguous sentinels also check the error indicator. A missing exception
 becomes `SystemError`. Success with a pending exception discards the result
-under the exclusive-call protocol and returns the captured exception.
+with exclusive context access and the context suspended, and returns the
+captured exception.
 Failures while creating or reporting an error must leave an appropriate
 exception such as `MemoryError`.
 
 At a generated callback boundary, a pending exception turns `Ok` into `Err`,
 even if no wrapped operation followed author code. An explicit `Err` remains
 primary; secondary exceptions are reported as unraisable. `Err` has its key
-checked first; a foreign-interpreter error is queued under its own key and
-replaced with `SystemError`. Restoring an exception may decref the previous
-one, so it uses the exclusive-call protocol.
+checked first; an error from another interpreter is queued under its own key
+and replaced with `SystemError`. Restoring an exception may decref the previous
+one, so it requires exclusive context access and suspension.
 
 Context availability proves attachment, not ownership of the error
 indicator: safe foreign code can set it without crossing a gate. The
-preflight and capture rules keep stale errors out of later C calls.
+initial checks and capture rules keep stale errors out of later C calls.
 Function entries return unexpected pending exceptions before invoking author
 code; `tp_dealloc` and module free save and restore them (see
 [Dropping](#dropping)).
@@ -732,9 +814,8 @@ it neither replaces the original panic nor unwinds itself.
 
 The built-in exception marker trait is sealed because its type pointer goes
 straight to C. Custom exception types stored as `Py<PyType>` need checked
-binding. Converting native failures into a `PyErr` requires an explicit
+binding. Converting Rust error values into a `PyErr` requires an explicit
 mutable context; detach/interop exception variants already own a `PyErr`.
-Nothing consults ambient attachment.
 
 ### Concrete objects and conversions
 
@@ -796,8 +877,8 @@ arguments cost no refcount; a reference `'view` into Python storage requires
 continuous attachment.
 
 Exact, published `PyBytes` storage is immutable and safe to read while
-detached, so its accessor is a leaf bounded by owner and entry rather than
-by the context borrow:
+detached, so its accessor is a leaf operation bounded by owner and entry
+rather than by the context borrow:
 
 ```rust
 impl<'a, 'py> Borrowed<'a, 'py, PyBytes> {
@@ -994,12 +1075,12 @@ must provide the same exclusion.
 #### State lifecycle
 
 CPython creates the module and binds its functions before allocating state;
-`PyModule_Exec` then allocates zeroed `StateStorage<S>` (key, atomic phase,
-`MaybeUninit<S>`). An unexecuted module is reachable, from
+`PyModule_Exec` then allocates zeroed `StateStorage<S>` (key, atomic lifecycle
+state, `MaybeUninit<S>`). An unexecuted module is reachable, from
 `importlib.util.module_from_spec` or `sys.modules` mid-import, so every
 callback handles missing storage. The macro rejects over-aligned types.
 
-| Operation | Allowed source phase | Published phase and access |
+| Operation | Allowed source state | Published state and access |
 | --- | --- | --- |
 | Any callback before exec | No storage | Functions and methods raise `SystemError("module is not initialized")`; traverse, clear, and free do nothing. |
 | Claim exec | `Uninitialized` | `Initializing`; any other source raises `SystemError`. |
@@ -1020,7 +1101,7 @@ type ModuleExec<S> = for<'a, 'py> fn(
 ```
 
 Publishing stores use release ordering and reads use acquire. Guards apply
-failure phases on unwind, and a panicking destructor is never retried.
+failure states on unwind, and a panicking destructor is never retried.
 Callbacks see state only once `Ready`, since exec may still be populating
 it.
 
@@ -1028,7 +1109,7 @@ it.
 
 Generated modules declare `Py_MOD_GIL_NOT_USED`,
 `Py_MOD_PER_INTERPRETER_GIL_SUPPORTED`, the internal exact-version ABI, and
-the build mode. That requires auditing native dependencies and global state.
+the build mode. That requires auditing extension dependencies and global state.
 Process-global Rust caches may hold only Rust data or checked opaque
 handles. The identity and lifetime checks apply even when import checks are
 disabled.
@@ -1115,13 +1196,13 @@ outer catch is a last-resort abort.
 | --- | --- |
 | Function, method, getter, setter, and constructor | Set a fixed `SystemError` and return the ABI's `NULL` or `-1` error sentinel. |
 | Module create | Set a fixed `SystemError` and return `NULL`. |
-| Module exec | Commit the appropriate failed state phase, set a fixed `SystemError`, and return `-1`. |
+| Module exec | Commit the appropriate failure state, set a fixed `SystemError`, and return `-1`. |
 | Module or instance clear | Finish the lifecycle transition and set `SystemError`, which CPython reports as unraisable. Instance clear returns failure. Module clear returns 0, because CPython skips clearing the module dict when `m_clear` fails. |
 | Traverse | Preserve incoming exception state and propagate the visitor's exact nonzero return and any error it sets. A Rust panic is fatal because continuing with an incomplete reachability report can violate GC invariants. |
 | `tp_dealloc` and module free | Save and clear any pending exception before cleanup. Run mandatory non-panicking cleanup guards, then report the panic as unraisable when an attached state is available. Restore the saved exception, or none, afterwards. Abort if cleanup itself cannot be completed safely. |
 
 Before dropping a payload or module state, deallocation commits the
-destroyed phase and installs cleanup guards, so a panic cannot cause a
+destroyed state and installs cleanup guards, so a panic cannot cause a
 double drop or skip cleanup. Destructors run with the context suspended and
 receive no context. During finalization, suspension keeps cleanup
 restrictions in force.
@@ -1204,7 +1285,7 @@ types with the same token. There is no global type cache.
 `type_object.new_instance(ctx, payload)` validates the token and every
 payload slot's key before publishing. It allocates with
 `_PyType_AllocNoTrack` (`PyType_GenericAlloc` tracks too early), writes the
-payload and phase metadata, then calls `PyObject_GC_Track`. On failure or
+payload and lifecycle metadata, then calls `PyObject_GC_Track`. On failure or
 unwind, the unpublished payload is dropped with the context suspended.
 
 Methods recover the defining module through `METH_METHOD`, validate its
@@ -1289,14 +1370,14 @@ Argument errors raise `TypeError`.
 
 CI runs `cargo fmt` and [Clippy](https://github.com/rust-lang/rust-clippy),
 and checks that every Python-touching safe `c_api` wrapper takes a context
-or sealed capability, and that shared-context wrappers have an audited leaf
-contract.
+or sealed capability, and that shared-context wrappers are audited as leaf
+operations.
 
 A new `_testrustapi` module, run by the regular test suite, covers testing the new Rust API correctness.
 
 ### Performance
 
-Rust code must match or be very close to C code in performance. Rust APIs should be measured against equivalent C: leaf access, binding, entry (outermost and
+Rust code must match or be very close to C code in performance. Rust APIs should be measured against equivalent C: leaf operations, binding, entry (outermost and
 nested), suspension, slot access, explicit decref, inline drops, queue
 overflow, contention, tiny callbacks, compression throughput, retained
 memory, gate overhead on code that never enters Rust, detached versus
