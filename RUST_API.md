@@ -1004,13 +1004,6 @@ CPython creates the module and binds its functions before allocating state;
 `importlib.util.module_from_spec` or `sys.modules` mid-import, so every
 callback handles missing storage. The macro rejects over-aligned types.
 
-This requires a CPython publication fix: initialize the zero-valid storage
-header before publishing `md_state`, synchronize pointer readers with that
-publication, and serialize competing allocations. Current allocation stores
-the pointer before zeroing it. Another thread can call an already-bound
-function during exec; release/acquire on the phase alone cannot protect the
-allocation containing that phase.
-
 | Operation | Allowed source phase | Published phase and access |
 | --- | --- | --- |
 | Any callback before exec | No storage | Functions and methods raise `SystemError("module is not initialized")`; traverse, clear, and free do nothing. |
@@ -1317,18 +1310,18 @@ attached-fallback CPU work, and output copying versus `PyBytesWriter`.
 ## Appendix: Open decisions and future work
 
 - **Upstream CPython prerequisites.** These bugs reproduce without Rust:
-  - Module-state allocation publishes `md_state` before zeroing it. Concurrent
+  1. Module-state allocation publishes `md_state` before zeroing it. Concurrent
     callbacks need initialized storage and synchronized pointer publication
     (see [State lifecycle](#state-lifecycle)).
-  - A PEP 788 guard held by a thread that does not survive `fork()` stays
+  2. A PEP 788 guard held by a thread that does not survive `fork()` stays
     counted, hanging the child's finalization. Public guards can be handed
     between threads, so a guard from a vanished thread may belong to the
     survivor. Guards need an ownership or fork-invalidation contract.
-  - A daemon thread blocked in a subinterpreter ended by main-interpreter
+  3. A daemon thread blocked in a subinterpreter ended by main-interpreter
     finalization can keep a dangling interpreter pointer and read freed
     memory on reattach. Leases make this reliable; the fatal hang check does
     not fix it.
-  - A guard holder waiting on a pending call scheduled after the finalizer's
+  4. A guard holder waiting on a pending call scheduled after the finalizer's
     last `_Py_FinishPendingCalls` deadlocks. Scheduling must wake
     finalizers, and the finalizer must run pending calls before parking.
 - **Static builds.** Static builds register modules through `PyInit_*`
