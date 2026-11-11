@@ -25,6 +25,19 @@ pub fn print_linker_args() {
         println!("cargo:rustc-cdylib-link-arg=dynamic_lookup");
     }
 
+    // Rust 1.100 stopped passing --allow-undefined to wasm-ld by default.
+    // Python C API symbols are provided by the interpreter, so keep them
+    // undefined in the cdylib.  On the component model targets (wasip2,
+    // wasip3) the linker is wasm-component-ld, which cannot turn a module
+    // with such imports into a component, so emit a core module instead.
+    if target_os == "wasi" {
+        println!("cargo:rustc-cdylib-link-arg=--allow-undefined");
+        let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+        if target_env == "p2" || target_env == "p3" {
+            println!("cargo:rustc-cdylib-link-arg=--skip-wit-component");
+        }
+    }
+
     // Apple framework builds for iOS encode framework search/link flags in
     // BLDSHARED_EXE. Skip the linker executable itself and filter out flags
     // that conflict with Cargo's own cdylib invocation.
