@@ -87,13 +87,16 @@ fn newest_clang_resource_dir() -> Option<PathBuf> {
 /// Derive the clang resource directory from LIBCLANG_PATH.
 ///
 /// When LIBCLANG_PATH points to e.g. `...\bin`, the resource directory is
-/// at `...\lib\clang\<version>`.  We pick the highest version found.
+/// at `...\lib\clang\<version>`.  We pick the version matching the loaded
+/// libclang, since the directory may also contain headers left behind by
+/// another LLVM installation.  Otherwise, we pick the highest version found.
 fn clang_resource_dir_from_libclang_path() -> Option<PathBuf> {
     let libclang_path = env::var("LIBCLANG_PATH").ok()?;
     let bin_dir = Path::new(&libclang_path);
     // LIBCLANG_PATH typically points to a `bin` directory; the resource
     // dir lives under the sibling `lib/clang/<version>`.
     let clang_lib_dir = bin_dir.parent()?.join("lib").join("clang");
+    let libclang_major = bindgen::clang_version().parsed.map(|(major, _)| major);
     let mut best: Option<(u32, PathBuf)> = None;
     for entry in std::fs::read_dir(&clang_lib_dir).ok()?.flatten() {
         let name = entry.file_name();
@@ -102,9 +105,13 @@ fn clang_resource_dir_from_libclang_path() -> Option<PathBuf> {
         // a full dotted version (e.g. "18.1.3"). Parse the major part.
         if let Ok(ver) = name.split('.').next().unwrap_or("").parse::<u32>() {
             let resource_dir = entry.path();
-            if resource_dir.join("include").is_dir()
-                && best.as_ref().map_or(true, |(v, _)| ver > *v)
-            {
+            if !resource_dir.join("include").is_dir() {
+                continue;
+            }
+            if Some(ver) == libclang_major {
+                return Some(resource_dir);
+            }
+            if best.as_ref().map_or(true, |(v, _)| ver > *v) {
                 best = Some((ver, resource_dir));
             }
         }
