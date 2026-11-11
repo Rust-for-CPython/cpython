@@ -399,7 +399,10 @@ RUST_TARGET=unknown
 PLATFORM_TRIPLET=wasm32-emscripten
 RUST_TARGET=wasm32-unknown-emscripten
 #  elif defined(__wasi__)
-#    if defined(_REENTRANT)
+#    if defined(__wasip3__)
+PLATFORM_TRIPLET=wasm32-wasi
+RUST_TARGET=wasm32-wasip3
+#    elif defined(_REENTRANT)
 PLATFORM_TRIPLET=wasm32-wasi-threads
 RUST_TARGET=wasm32-wasip1-threads
 LLVM_TARGET=wasm32-wasi

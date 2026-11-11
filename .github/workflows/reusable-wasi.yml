@@ -48,8 +48,9 @@ jobs:
         python-version: '3.x'
     - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # 1.95.0
       with:
-        toolchain: 1.95.0
-        targets: wasm32-wasip1
+        # wasm32-wasip3 has prebuilt std starting with Rust 1.100.
+        toolchain: 1.100.0
+        targets: wasm32-wasip3
     - name: "Runner image version"
       run: echo "IMAGE_OS_VERSION=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
     - name: "Configure build Python"
