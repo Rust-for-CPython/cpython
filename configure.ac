@@ -4758,11 +4758,13 @@ if test "x$CARGO_HOME" = "x"; then
   dnl try to guess the default UNIX value of ~/.cargo
   CARGO_HOME="$HOME/.cargo"
 fi
-AC_CHECK_PROG(HAVE_CARGO, [cargo], ["$CARGO_HOME"], [yes], [no])
-if test $HAVE_CARGO = "no"; then
+AC_PATH_PROG([CARGO], [cargo], [no], [$PATH$PATH_SEPARATOR$CARGO_HOME/bin])
+if test "$CARGO" = "no"; then
+  HAVE_CARGO=no
   AC_MSG_RESULT([n/a])
   AC_MSG_WARN([Could not find the cargo executable. It can be installed via rustup])
 else
+  HAVE_CARGO=yes
   if test "$Py_OPT" = 'true'; then
     CARGO_TARGET_DIR='release'
     CARGO_PROFILE='release'
@@ -4794,7 +4796,6 @@ case "$host" in
   *-apple-*)  CARGO_DYLIB_SUFFIX=".dylib";;
   *)          CARGO_DYLIB_SUFFIX="$SHLIB_SUFFIX";;
 esac
-AC_SUBST([CARGO_HOME])
 AC_SUBST([CARGO_TARGET_DIR])
 AC_SUBST([CARGO_PROFILE])
 AC_SUBST([CARGO_TARGET])
