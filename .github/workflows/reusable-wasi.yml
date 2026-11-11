@@ -46,9 +46,9 @@ jobs:
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: '3.x'
-    - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # 1.95.0
+    # wasm32-wasip3 has prebuilt std starting with Rust 1.100.
+    - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
       with:
-        # wasm32-wasip3 has prebuilt std starting with Rust 1.100.
         toolchain: 1.100.0
         targets: wasm32-wasip3
     - name: "Runner image version"
