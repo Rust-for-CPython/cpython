@@ -35957,6 +35957,10 @@ fi
 
 if test "$HAVE_CARGO" != "no" -a "$MODULE_BUILDTYPE" = "static"; then
   RUST_STATICLIB_DEP=cpython-rust-staticlib
+        if test "$CARGO_TARGET" = "wasm32-wasip3"
+then :
+  as_fn_append LDFLAGS_NODIST " -Wl,--export=cabi_realloc"
+fi
 else
   RUST_STATICLIB_DEP=
 fi

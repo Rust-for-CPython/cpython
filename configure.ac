@@ -8637,6 +8637,11 @@ dnl Set RUST_STATICLIB_DEP to cpython-rust-staticlib when building Rust
 dnl modules statically so that the python binary depends on it.
 if test "$HAVE_CARGO" != "no" -a "$MODULE_BUILDTYPE" = "static"; then
   RUST_STATICLIB_DEP=cpython-rust-staticlib
+  dnl Rust's std for wasm32-wasip3 defines its own weak cabi_realloc, which
+  dnl may take precedence over wasi-libc's exported one.  The component
+  dnl encoder requires it to be exported, as rustc does when it links.
+  AS_IF([test "$CARGO_TARGET" = "wasm32-wasip3"],
+    [AS_VAR_APPEND([LDFLAGS_NODIST], [" -Wl,--export=cabi_realloc"])])
 else
   RUST_STATICLIB_DEP=
 fi
