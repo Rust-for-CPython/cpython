@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v7.0.0
         with:
           persist-credentials: false
+      # Intentionally use the latest stable Rust here
+      # to get the latest clippy lints and cargo fmt.
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
