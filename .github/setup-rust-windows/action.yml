@@ -11,7 +11,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # 1.95.0
+    - uses: dtolnay/rust-toolchain@1961bfc0c4a8bf07e0a0c98e1e2459c642ea70a0 # 1.95.0
       with:
         toolchain: 1.95.0
         targets: i686-pc-windows-msvc,x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
