@@ -82,10 +82,10 @@ struct BorrowedBuffer {
 }
 
 impl BorrowedBuffer {
-    fn from_object(obj: &PyObject) -> Result<Self, ()> {
+    fn from_object(obj: *mut PyObject) -> Result<Self, ()> {
         let mut view = MaybeUninit::<Py_buffer>::uninit();
         let buffer = unsafe {
-            if PyObject_GetBuffer(obj.as_raw(), view.as_mut_ptr(), PYBUF_SIMPLE) != 0 {
+            if PyObject_GetBuffer(obj, view.as_mut_ptr(), PYBUF_SIMPLE) != 0 {
                 return Err(());
             }
             Self {
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn standard_b64encode(
         return ptr::null_mut();
     }
 
-    let source = unsafe { &**args };
+    let source = unsafe { *args };
 
     // Safe cast by Safety
     match standard_b64encode_impl(source) {
@@ -139,7 +139,7 @@ pub unsafe extern "C" fn standard_b64encode(
     }
 }
 
-fn standard_b64encode_impl(source: &PyObject) -> Result<*mut PyObject, ()> {
+fn standard_b64encode_impl(source: *mut PyObject) -> Result<*mut PyObject, ()> {
     let buffer = match BorrowedBuffer::from_object(source) {
         Ok(buf) => buf,
         Err(_) => return Err(()),
