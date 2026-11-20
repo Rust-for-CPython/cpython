@@ -9005,10 +9005,6 @@ PY_STDLIB_MOD([_uuid],
   [], [test "$have_uuid" = "yes"],
   [$LIBUUID_CFLAGS], [$LIBUUID_LIBS])
 
-PY_STDLIB_MOD([_base64],
-  [test "$HAVE_CARGO" = yes], [test "$HAVE_CARGO" = yes],
-  [], [])
-
 dnl compression libs
 PY_STDLIB_MOD([zlib], [], [test "$have_zlib" = yes],
   [$ZLIB_CFLAGS], [$ZLIB_LIBS])
