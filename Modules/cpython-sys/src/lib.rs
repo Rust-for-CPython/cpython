@@ -57,16 +57,6 @@ pub const _Py_STATIC_IMMORTAL_INITIAL_REFCNT: Py_ssize_t =
 #[cfg(not(target_pointer_width = "64"))]
 pub const _Py_STATIC_IMMORTAL_INITIAL_REFCNT: Py_ssize_t = (7u32 << 28) as Py_ssize_t;
 
-#[repr(transparent)]
-pub struct PyObject(std::cell::UnsafeCell<_object>);
-
-impl PyObject {
-    #[inline]
-    pub fn as_raw(&self) -> *mut Self {
-        self.0.get() as *mut Self
-    }
-}
-
 #[repr(C)]
 pub union PyMethodDefFuncPointer {
     pub PyCFunction: unsafe extern "C" fn(slf: *mut PyObject, args: *mut PyObject) -> *mut PyObject,
@@ -126,25 +116,25 @@ unsafe impl Send for PyMethodDef {}
 pub const PyObject_HEAD_INIT: PyObject = {
     let mut obj: _object = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
     obj.ob_flags = _Py_STATICALLY_ALLOCATED_FLAG as _;
-    PyObject(std::cell::UnsafeCell::new(obj))
+    obj
 };
 
 #[cfg(all(not(py_gil_disabled), target_pointer_width = "64"))]
-pub const PyObject_HEAD_INIT: PyObject = PyObject(std::cell::UnsafeCell::new(_object {
+pub const PyObject_HEAD_INIT: PyObject = _object {
     __bindgen_anon_1: _object__bindgen_ty_1 {
         ob_refcnt_full: _Py_STATIC_IMMORTAL_INITIAL_REFCNT as i64,
     },
     ob_type: std::ptr::null_mut(),
-}));
+};
 
 // On 32-bit platforms, the refcount union only has ob_refcnt (no ob_refcnt_split).
 #[cfg(all(not(py_gil_disabled), not(target_pointer_width = "64")))]
-pub const PyObject_HEAD_INIT: PyObject = PyObject(std::cell::UnsafeCell::new(_object {
+pub const PyObject_HEAD_INIT: PyObject = _object {
     __bindgen_anon_1: _object__bindgen_ty_1 {
         ob_refcnt: _Py_STATIC_IMMORTAL_INITIAL_REFCNT,
     },
     ob_type: std::ptr::null_mut(),
-}));
+};
 
 pub const PyModuleDef_HEAD_INIT: PyModuleDef_Base = PyModuleDef_Base {
     ob_base: PyObject_HEAD_INIT,

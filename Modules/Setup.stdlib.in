@@ -118,7 +118,6 @@
 ############################################################################
 # Rust modules
 #
-@MODULE__BASE64_TRUE@_base64 _base64/Cargo.toml _base64/src/lib.rs
 
 ############################################################################
 # Modules with some UNIX dependencies

@@ -5,7 +5,6 @@ edition = "2024"
 rust-version.workspace = true
 
 [dependencies]
-_base64 ={ path = "../_base64" }
 
 [lib]
 name = "cpython_rust_staticlib"

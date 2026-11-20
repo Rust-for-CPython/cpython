@@ -23,6 +23,7 @@ IGNORE = {
     'site-packages',
 
     # Rust build-system support modules
+    'cpython-api',
     'cpython-build-helper',
     'cpython-rust-staticlib',
 
